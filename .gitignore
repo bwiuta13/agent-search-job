@@ -13,3 +13,5 @@ build/
 *.egg-info/
 .DS_Store
 file:*
+data/*.db-shm
+data/*.db-wal
