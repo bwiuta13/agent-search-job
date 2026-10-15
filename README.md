@@ -106,6 +106,22 @@ DELETE /api/me/saved-jobs/:jobId
 GET  /api/me/saved-jobs
 ```
 
+## LLM enrichment (tuỳ chọn, chạy sau ingest)
+
+LLM chỉ dùng cho field khó + relevance scoring — **không** thay rule-based (docs/research-website.md mục 6). Kết quả cache theo `(job_id, model, prompt_version, kind)` nên chạy lại không tốn token; lỗi/không cấu hình LLM thì pipeline vẫn đầy đủ.
+
+```bash
+export AI_PROVIDER=openai
+export AI_TEXT_MODEL=z-ai/glm-5.3
+export OPENAI_API_KEY=<key>
+export OPENAI_BASE_URL=https://tokenplan.api.greennode.ai/v1
+export OPENAI_REQUEST_TIMEOUT_SECONDS=90
+
+python scripts/llm_enrich.py --db data/jobs.db --limit 50
+```
+
+Sau khi enrich: search sort theo `llm_relevance` (job đúng nhóm Content/Multimedia TP.HCM đứng đầu), badge "phù hợp X%" kèm lý do, field khó (`content_types`, `on_camera_required`, `agency_or_inhouse`, KPI...) lưu trong cache bảng `llm_enrichment`.
+
 ## Test
 
 ```bash

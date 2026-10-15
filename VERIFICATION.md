@@ -72,7 +72,27 @@ vn_jobs_get_market_facets          → 7 role clusters, 12 districts, sources
 
 Toàn bộ endpoint trong docs/implementation-plan.md mục 5 trả 200 với dữ liệu thật; 401 khi thiếu auth.
 
-## 6. Điểm chưa hoàn thành / hạn chế
+## 6. LLM enrichment (model z-ai/glm-5.3 qua Greennode)
+
+```text
+$ python scripts/llm_enrich.py --db data/jobs.db --limit 10
+Jobs cần enrich: 10 (model=z-ai/glm-5.3, prompt=v1)
+  ✓ [209] Marketing & Communications Team Leader | rel=0.7 | Vị trí Marcom tại TP.HCM...
+  ✓ [192] Social Media Content Executive         | rel=1.0 | Đúng nhóm content/social...
+  ✓ [195] Social Media Executive                 | rel=0.9 | ...
+  (Email Marketing / Marketing tổng hợp -> 0.5: liên quan nhưng lệch nhóm chính)
+Enriched: 10 | LLM fail: 0
+```
+
+- Relevance phân biệt đúng: social/content chuyên = 0.9–1.0; marketing tổng hợp = 0.5
+- Cache hoạt động: chạy lại 2 lần -> `jobs_needing_llm` trả danh sách trống cho các job đã enrich
+- Search join: `/api/jobs?query=social` giờ sort theo `llm_relevance` DESC (verify: 4 job rel=1.0 đứng đầu kèm `llm_reason`)
+- Không cấu hình key -> script in hướng dẫn và thoát êm, không lỗi
+- 5 test LLM mới (mock httpx): parse JSON, sanitize enum, thiếu key -> None, lỗi mạng -> None, cache roundtrip + search join
+
+Lưu ý model GLM-5.3 là reasoning model: cần `max_tokens` lớn (1.500–2.500) vì token reasoning trừ vào cùng pool — bug đã sửa trong phiên bản này.
+
+## 7. Điểm chưa hoàn thành / hạn chế
 
 - Deploy production (Render/Docker, PostgreSQL, Clerk OAuth) — nằm ngoài scope bản này, thiết kế đã tách để nâng cấp.
 - Indeed adapter: research 15/10 cho thấy cần `country_indeed="vietnam"`; chưa crawl trong run cuối vì đã từng bị chặn — bật thêm khi cần.

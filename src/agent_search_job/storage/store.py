@@ -103,6 +103,17 @@ CREATE TABLE IF NOT EXISTS users (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS llm_enrichment (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id INTEGER NOT NULL REFERENCES jobs(job_id),
+    model TEXT NOT NULL,
+    prompt_version TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(job_id, model, prompt_version, kind)
+);
+
 CREATE TABLE IF NOT EXISTS saved_jobs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL REFERENCES users(user_id),
@@ -338,12 +349,35 @@ class JobStore:
         wsql = (" WHERE " + " AND ".join(where)) if where else ""
         base = f"FROM jobs{wsql}"
         total = self.conn.execute(f"SELECT COUNT(*) c {base}", params).fetchone()["c"]
+        # sort: LLM relevance (nếu có) giảm dần, rồi job_id DESC (job mới trước)
+        order = (
+            " ORDER BY (SELECT MAX(CAST(json_extract(e.payload_json,'$.relevance') AS REAL)) "
+            "FROM llm_enrichment e WHERE e.job_id=jobs.job_id AND e.kind='relevance') DESC, "
+            "job_id DESC"
+        )
         rows = self.conn.execute(
-            f"SELECT * {base} ORDER BY job_id DESC LIMIT ?", (*params, page_size + 1)
+            f"SELECT * {base}{order} LIMIT ?", (*params, page_size + 1)
         ).fetchall()
         has_more = len(rows) > page_size
         rows = rows[:page_size]
-        items = [self._row_to_dict(r) for r in rows]
+        items = []
+        for r in rows:
+            d = self._row_to_dict(r)
+            # gắn LLM relevance vào item (nếu đã enrich)
+            er = self.conn.execute(
+                """SELECT payload_json FROM llm_enrichment
+                   WHERE job_id=? AND kind='relevance'
+                   ORDER BY id DESC LIMIT 1""",
+                (d["job_id"],),
+            ).fetchone()
+            if er:
+                try:
+                    pl = json.loads(er["payload_json"])
+                    d["llm_relevance"] = pl.get("relevance")
+                    d["llm_reason"] = pl.get("reason")
+                except (TypeError, json.JSONDecodeError):
+                    pass
+            items.append(d)
         next_cursor = str(rows[-1]["job_id"]) if has_more and rows else None
         return {
             "items": items,
@@ -457,6 +491,50 @@ class JobStore:
         rows = self.conn.execute(
             "SELECT * FROM jobs WHERE company_name LIKE ? AND is_active=1 ORDER BY job_id DESC LIMIT ?",
             (f"%{comp['name']}%", limit),
+        ).fetchall()
+        return [self._row_to_dict(r) for r in rows]
+
+    # ------------------------------------------------------------------
+    # LLM enrichment cache (model + prompt version + job unique)
+    # ------------------------------------------------------------------
+
+    def get_llm_cache(self, job_id: int, model: str, prompt_version: str,
+                      kind: str) -> Optional[dict]:
+        row = self.conn.execute(
+            """SELECT payload_json FROM llm_enrichment
+               WHERE job_id=? AND model=? AND prompt_version=? AND kind=?""",
+            (job_id, model, prompt_version, kind),
+        ).fetchone()
+        if not row:
+            return None
+        try:
+            return json.loads(row["payload_json"])
+        except (TypeError, json.JSONDecodeError):
+            return None
+
+    def set_llm_cache(self, job_id: int, model: str, prompt_version: str,
+                      kind: str, payload: dict) -> None:
+        with self.conn:
+            self.conn.execute(
+                """INSERT OR REPLACE INTO llm_enrichment
+                   (job_id, model, prompt_version, kind, payload_json, created_at)
+                   VALUES (?,?,?,?,?,?)""",
+                (job_id, model, prompt_version, kind,
+                 json.dumps(payload, ensure_ascii=False), utcnow().isoformat()),
+            )
+
+    def jobs_needing_llm(self, model: str, prompt_version: str,
+                         limit: int = 50) -> list[dict]:
+        """Job active, HCM, chưa có cache relevance của model/prompt hiện tại."""
+        rows = self.conn.execute(
+            """SELECT j.* FROM jobs j
+               WHERE j.is_active=1 AND j.is_hcm=1
+                 AND NOT EXISTS (
+                   SELECT 1 FROM llm_enrichment e
+                   WHERE e.job_id=j.job_id AND e.model=? AND e.kind='relevance'
+                     AND e.prompt_version=?)
+               ORDER BY j.job_id DESC LIMIT ?""",
+            (model, prompt_version, limit),
         ).fetchall()
         return [self._row_to_dict(r) for r in rows]
 

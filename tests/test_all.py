@@ -3,6 +3,7 @@ MCP contracts, web API và MCP protocol - chạy không cần mạng (fixtures).
 """
 from __future__ import annotations
 
+import json
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -404,3 +405,116 @@ class TestWebAPI:
                         headers={"Authorization": f"Bearer {token}",
                                  "Origin": "https://evil.example"})
         assert r.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# LLM enrichment (mock httpx, không gọi mạng thật)
+# ---------------------------------------------------------------------------
+
+class TestLLMEnrich:
+    def _cfg(self):
+        from agent_search_job.pipeline.llm_enrich import LLMConfig
+        return LLMConfig(api_key="test-key", model="z-ai/glm-5.3",
+                         base_url="http://llm.test/v1")
+
+    async def test_score_relevance_parses_json(self):
+        import agent_search_job.pipeline.llm_enrich as le
+
+        class FakeResp:
+            def raise_for_status(self): pass
+            def json(self):
+                return {"choices": [{"message": {
+                    "content": '{"relevance": 0.9, "reason": "đúng nhóm content"}'}}]}
+
+        class FakeClient:
+            def __init__(self, *a, **k): pass
+            async def __aenter__(self): return self
+            async def __aexit__(self, *a): return False
+            async def post(self, *a, **k): return FakeResp()
+
+        orig = le.httpx.AsyncClient
+        le.httpx.AsyncClient = FakeClient
+        try:
+            en = le.LLMEnricher(self._cfg())
+            rel = await en.score_relevance({"title": "Social Media Specialist",
+                                            "company_name": "X", "district": "Quận 1",
+                                            "city": "Hồ Chí Minh", "description": "TikTok"})
+            assert rel is not None and rel.relevance == 0.9
+            assert "content" in rel.reason
+        finally:
+            le.httpx.AsyncClient = orig
+
+    async def test_extract_sanitizes_enums(self):
+        import agent_search_job.pipeline.llm_enrich as le
+
+        class FakeResp:
+            def raise_for_status(self): pass
+            def json(self):
+                return {"choices": [{"message": {"content": json.dumps({
+                    "platforms": ["tiktok", "napster"],
+                    "content_types": ["short_video", "wrong"],
+                    "creative_tools": ["capcut", "excel"],
+                    "on_camera_required": True,
+                    "client_facing": None,
+                    "agency_or_inhouse": "agency",
+                    "kpi_types": ["views"],
+                    "languages": ["vi", "jp"],
+                })}}]}
+
+        class FakeClient:
+            def __init__(self, *a, **k): pass
+            async def __aenter__(self): return self
+            async def __aexit__(self, *a): return False
+            async def post(self, *a, **k): return FakeResp()
+
+        orig = le.httpx.AsyncClient
+        le.httpx.AsyncClient = FakeClient
+        try:
+            en = le.LLMEnricher(self._cfg())
+            ext = await en.extract("TikTok Content", "làm video ngắn")
+            assert ext.platforms == ["tiktok"]
+            assert ext.content_types == ["short_video"]
+            assert ext.creative_tools == ["capcut"]
+            assert ext.on_camera_required is True
+            assert ext.agency_or_inhouse == "agency"
+            assert ext.languages == ["vi"]
+        finally:
+            le.httpx.AsyncClient = orig
+
+    async def test_no_api_key_returns_none(self):
+        from agent_search_job.pipeline.llm_enrich import LLMEnricher, LLMConfig
+        en = LLMEnricher(LLMConfig(api_key=""))
+        assert await en.score_relevance({"title": "x"}) is None
+        assert await en.extract("t", "d") is None
+
+    async def test_llm_error_returns_none(self):
+        import agent_search_job.pipeline.llm_enrich as le
+
+        class FakeClient:
+            def __init__(self, *a, **k): raise RuntimeError("network down")
+
+        orig = le.httpx.AsyncClient
+        le.httpx.AsyncClient = FakeClient
+        try:
+            en = le.LLMEnricher(self._cfg())
+            assert await en.score_relevance({"title": "x"}) is None
+        finally:
+            le.httpx.AsyncClient = orig
+
+    def test_cache_roundtrip_and_search_join(self):
+        from agent_search_job.pipeline.llm_enrich import PROMPT_VERSION
+        store = JobStore(":memory:")
+        jid = store.insert_job(normalize_job(make_job()))
+        assert store.get_llm_cache(jid, "m", "v1", "relevance") is None
+        store.set_llm_cache(jid, "m", "v1", "relevance",
+                            {"relevance": 0.8, "reason": "ok"})
+        got = store.get_llm_cache(jid, "m", "v1", "relevance")
+        assert got["relevance"] == 0.8
+        # jobs_needing_llm loại job đã cache
+        store.set_llm_cache(jid, "m", PROMPT_VERSION, "relevance",
+                            {"relevance": 0.8, "reason": "ok"})
+        assert store.jobs_needing_llm("m", PROMPT_VERSION) == []
+        # search join llm_relevance
+        res = store.search_jobs(query="content")
+        item = next(i for i in res["items"] if i["job_id"] == jid)
+        assert item.get("llm_relevance") == 0.8
