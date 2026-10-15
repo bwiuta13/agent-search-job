@@ -138,7 +138,9 @@ class JobStore:
     @property
     def conn(self) -> sqlite3.Connection:
         if not hasattr(self._local, "conn") or self._local.conn is None:
-            conn = sqlite3.connect(self.db_path, timeout=15)
+            is_uri = self.db_path.startswith("file:")
+            conn = sqlite3.connect(
+                self.db_path, timeout=15, uri=is_uri)
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA foreign_keys=ON")
