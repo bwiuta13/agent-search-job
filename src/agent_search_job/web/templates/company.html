@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}{{ company.name }} — hồ sơ công ty{% endblock %}
+{% block content %}
+<div class="card">
+  <h1>{{ company.name }}</h1>
+  <dl class="kv">
+    {% if company.industry %}<dt>Ngành</dt><dd>{{ company.industry }}</dd>{% endif %}
+    {% if company.size %}<dt>Quy mô</dt><dd>{{ company.size }}</dd>{% endif %}
+    {% if company.address %}<dt>Địa chỉ</dt><dd>{{ company.address }}</dd>{% endif %}
+    {% if company.website %}<dt>Website</dt><dd><a href="{{ company.website }}" target="_blank" rel="noopener noreferrer">{{ company.website }}</a></dd>{% endif %}
+    {% if company.tax_code %}<dt>Mã số thuế</dt><dd>{{ company.tax_code }}</dd>{% endif %}
+  </dl>
+  {% if company.profile %}
+  <h3 style="margin-top:14px">Thông tin do công ty cung cấp</h3>
+  <div style="white-space:pre-wrap;font-size:14px">{{ company.profile[:1500] }}</div>
+  {% if company.profile_source_url %}<p class="prov">Nguồn hồ sơ: <a href="{{ company.profile_source_url }}">{{ company.profile_source_url }}</a></p>{% endif %}
+  {% endif %}
+</div>
+
+<div class="card">
+  <h3>Đánh giá bên thứ ba</h3>
+  {% if feedback %}
+    <table class="simple">
+      <tr><th>Nguồn</th><th>Điểm</th><th>Số review</th><th>Độ tin cậy</th><th>Cập nhật</th><th>Link</th></tr>
+      {% for f in feedback %}
+      <tr>
+        <td>{{ f.source }}</td>
+        <td>{% if f.rating %}{{ f.rating }}/5{% else %}—{% endif %}</td>
+        <td>{{ f.review_count or '—' }}</td>
+        <td><span class="badge {% if f.confidence == 'high' %}green{% endif %}">{{ f.confidence }}</span></td>
+        <td>{{ f.fetched_at[:10] }}</td>
+        <td><a href="{{ f.source_url }}" target="_blank" rel="noopener noreferrer">xem ↗</a></td>
+      </tr>
+      {% endfor %}
+    </table>
+    <p class="warn-note" style="margin-top:10px">
+      ⚠️ Đánh giá ẩn danh là ý kiến chưa kiểm chứng. Chỉ tham khảo — hãy tự kiểm tra link nguồn.
+    </p>
+  {% else %}
+    <p class="warn-note">Chưa có nguồn đánh giá đủ tin cậy cho công ty này.
+    Bạn có thể tự kiểm tra trên Indeed, Glassdoor hoặc ITviec.</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h3>Việc đang tuyển ({{ open_jobs|length }})</h3>
+  {% for j in open_jobs %}
+  <p>
+    <a href="/jobs/{{ j.job_id }}">{{ j.title }}</a>
+    {% if j.salary_min_vnd %}<span class="salary" style="font-size:13px">{{ "{:,.0f}".format(j.salary_min_vnd / 1000000) }} triệu+</span>{% endif %}
+  </p>
+  {% else %}
+  <p style="color:var(--muted)">Không có việc đang mở trong dữ liệu.</p>
+  {% endfor %}
+</div>
+{% endblock %}

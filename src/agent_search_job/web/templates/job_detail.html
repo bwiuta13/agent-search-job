@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}{{ job.title }} — chi tiết{% endblock %}
+{% block content %}
+<div class="card">
+  <h1>{{ job.title }}</h1>
+  <p style="margin:4px 0">
+    <strong>{{ job.company_name }}</strong>
+    {% if job.company_id %}· <a href="/companies/{{ job.company_id }}">Xem công ty</a>{% endif %}
+  </p>
+  <div class="meta" style="color:var(--muted);font-size:14px;display:flex;gap:14px;flex-wrap:wrap;margin:8px 0">
+    {% if job.salary_min_vnd %}
+    <span class="salary">{{ "{:,.0f}".format(job.salary_min_vnd / 1000000) }}{% if job.salary_max_vnd %} - {{ "{:,.0f}".format(job.salary_max_vnd / 1000000) }}{% endif %} triệu VND/tháng</span>
+    {% elif job.salary_text %}<span class="salary">{{ job.salary_text }}</span>{% endif %}
+    {% if job.district %}<span>📍 {{ job.district }}, {{ job.city }}</span>{% endif %}
+    {% if job.work_mode %}<span>🕐 {{ job.work_mode }}</span>{% endif %}
+    {% if job.experience_years_min is not none %}<span>💼 Kinh nghiệm: {{ job.experience_years_min }}{% if job.experience_years_max %} - {{ job.experience_years_max }}{% endif %} năm</span>{% endif %}
+    {% if job.deadline %}<span>⏳ Hạn nộp: {{ job.deadline[:10] }}</span>{% endif %}
+  </div>
+  <div style="margin:10px 0">
+    <span class="badge">{{ job.role_cluster }}</span>
+    <span class="badge gray">nguồn: {{ job.source }}</span>
+    {% for p in job.platforms %}<span class="badge gray">{{ p }}</span>{% endfor %}
+    {% for t in job.creative_tools %}<span class="badge gray">{{ t }}</span>{% endfor %}
+    {% if job.portfolio_required %}<span class="badge">cần portfolio</span>{% endif %}
+  </div>
+  <p><a class="btn" href="{{ job.apply_url or job.source_url }}" target="_blank" rel="noopener noreferrer">Xem &amp; ứng tuyển tại trang nguồn ↗</a></p>
+</div>
+
+{% if job.description %}
+<div class="card">
+  <h3>Mô tả công việc</h3>
+  <div style="white-space:pre-wrap;font-size:14.5px">{{ job.description[:4000] }}</div>
+</div>
+{% endif %}
+
+{% if job.requirements %}
+<div class="card">
+  <h3>Yêu cầu</h3>
+  <div style="white-space:pre-wrap;font-size:14.5px">{{ job.requirements[:3000] }}</div>
+</div>
+{% endif %}
+
+{% if job.benefits %}
+<div class="card">
+  <h3>Quyền lợi</h3>
+  <ul>{% for b in job.benefits %}<li>{{ b }}</li>{% endfor %}</ul>
+</div>
+{% endif %}
+
+<div class="prov">
+  Nguồn: <a href="{{ job.source_url }}" target="_blank" rel="noopener noreferrer">{{ job.source }}</a> ·
+  Thu thập lần đầu: {{ job.first_seen_at[:10] if job.first_seen_at }} ·
+  Kiểm tra gần nhất: {{ job.last_verified_at[:10] if job.last_verified_at }} ·
+  Dữ liệu có thể thay đổi — luôn mở trang nguồn để xác nhận.
+</div>
+{% endblock %}

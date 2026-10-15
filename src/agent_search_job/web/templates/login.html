@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Đăng nhập — Việc làm Content & Marketing TP.HCM{% endblock %}
+{% block content %}
+<div class="login-box card">
+  <h1>Đăng nhập</h1>
+  <p style="color:var(--muted);font-size:14px">
+    Website kín cho nhóm tìm việc Content &amp; Marketing tại TP.HCM.
+    Chỉ email được mời mới truy cập được.
+  </p>
+  {% if request.query_params.get('error') %}
+  <p class="error">Email chưa được mời hoặc không hợp lệ.</p>
+  {% endif %}
+  <form method="post" action="/login">
+    <input type="email" name="email" placeholder="Email được mời" required autofocus>
+    <button class="btn" type="submit" style="width:100%">Đăng nhập</button>
+  </form>
+</div>
+{% endblock %}
