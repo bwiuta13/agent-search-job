@@ -8,15 +8,19 @@
     <h1>Chào bạn quay lại</h1>
     <p class="lede">
       Kho việc Content &amp; Marketing tại TP.HCM, gom từ 5 trang tuyển dụng.
-      Đăng nhập bằng email đã được mời.
+      Đăng nhập bằng email đã được mời và mã truy cập người mời gửi cho bạn.
     </p>
     {% if request.query_params.get('error') %}
-    <p class="error">{{ icon('alert') }}Email này chưa được mời. Kiểm tra lại chính tả hoặc nhờ người mời thêm bạn.</p>
+    <p class="error">{{ icon('alert') }}Email hoặc mã truy cập không đúng. Kiểm tra lại, hoặc nhờ người mời gửi lại mã.</p>
     {% endif %}
     <form method="post" action="/login">
       <label class="field">
         {{ icon('mail') }}
         <input type="email" name="email" placeholder="ban@email.com" aria-label="Email được mời" required autofocus>
+      </label>
+      <label class="field">
+        {{ icon('shield') }}
+        <input type="password" name="code" placeholder="Mã truy cập" aria-label="Mã truy cập" autocomplete="current-password" required>
       </label>
       <button class="btn" type="submit">Đăng nhập {{ icon('arrow-right') }}</button>
     </form>

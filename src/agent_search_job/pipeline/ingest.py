@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Optional
@@ -193,6 +194,7 @@ class IngestPipeline:
             else:
                 log.warning("%s: health check lỗi — %s", h.source, h.error)
 
+        crawled_sources: set[str] = set()  # nguồn quét được ít nhất 1 job lượt này
         for adapter in self.adapters:
             for q in queries:
                 try:
@@ -206,6 +208,8 @@ class IngestPipeline:
                         if got >= max_results_per_query:
                             break
                     log.info("%s · %r: %d job", adapter.name, q, got)
+                    if got:
+                        crawled_sources.add(adapter.name)
                 except Exception as e:  # noqa: BLE001 - adapter lỗi thì log, bỏ qua
                     msg = f"{adapter.name}: {type(e).__name__}: {e}"
                     log.warning("%s · %r lỗi — %s: %s", adapter.name, q,
@@ -253,8 +257,14 @@ class IngestPipeline:
         log.info("Lọc: %d job tìm thấy, %d ngoài phạm vi nghề, %d ngoài TP.HCM, "
                  "%d trùng → +%d mới, %d cập nhật", result.discovered, result.out_of_scope,
                  result.out_of_hcm, result.duplicates_skipped, result.inserted, result.updated)
-        # mark inactive: job quá hạn deadline
-        self.store.mark_expired_inactive()
+        # mark inactive: job quá hạn deadline + job JOB_STALE_DAYS ngày không thấy lại
+        # trên nguồn vừa quét (mặc định 30, 0 = tắt)
+        stale_days = int(os.environ.get("JOB_STALE_DAYS", "30") or 0)
+        hidden = self.store.mark_expired_inactive(
+            stale_days=stale_days, stale_sources=tuple(sorted(crawled_sources)))
+        if hidden["expired"] or hidden["stale"]:
+            log.info("Ẩn %d job quá hạn nộp, %d job %d ngày không thấy lại trên nguồn",
+                     hidden["expired"], hidden["stale"], stale_days)
         result.finished_at = utcnow()
         self.store.finish_crawl_run(result.run_id, result)
         return result

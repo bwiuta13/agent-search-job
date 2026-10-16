@@ -3,7 +3,7 @@
 Triển khai JSON-RPC 2.0 Streamable HTTP tại /mcp, chạy trong FastAPI app.
 Mỗi tool có inputSchema + outputSchema (JSON Schema), trả structuredContent
 kèm TextContent JSON để tương thích client cũ.
-MVP auth: bearer token trùng users.token (invite-only); deploy thật nâng lên OAuth 2.1.
+Auth: bearer token = users.token ngẫu nhiên (invite-only, cũng là mã đăng nhập web).
 """
 from __future__ import annotations
 

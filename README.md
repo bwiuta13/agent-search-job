@@ -46,23 +46,40 @@ python scripts/enrich_companies.py data/jobs.db
 make start                       # = python scripts/serve.py --db data/jobs.db --port 8765
 make start PORT=8770             # đổi cổng nếu 8765 đang bận
 
-# 4) Lấy MCP token (email allowlist)
+# 4) Lấy mã truy cập từng email (đăng nhập web + MCP bearer token)
 python scripts/show_token.py data/jobs.db
 ```
 
 Mời người dùng: set env `ALLOWLIST_EMAILS="a@gmail.com,b@gmail.com"` trước lần chạy đầu (mặc định `friend@example.com`).
 Mở public (không cần đăng nhập, cả web/API/MCP): để `ALLOWLIST_EMAILS=` rỗng trong `.env` (server tự nạp `.env`; biến set trong shell được ưu tiên) hoặc chạy `ALLOWLIST_EMAILS= make start`. Khách xem/tìm được mọi thứ nhưng không lưu việc được; không set biến thì vẫn invite-only.
 
+## Đăng nhập & bảo mật
+
+- Mỗi email được mời có một **mã truy cập ngẫu nhiên** (`secrets.token_urlsafe(24)`, lưu ở `users.token`), tạo khi email được seed. Lấy bằng `python scripts/show_token.py data/jobs.db` rồi gửi riêng cho từng người.
+- Web: đăng nhập bằng **email + mã truy cập**. Sai email hay sai mã đều trả cùng một lỗi (không dò được email nào đã được mời). Session là token ngẫu nhiên lưu trong bảng `sessions` của SQLite, hết hạn sau 7 ngày, còn nguyên khi restart server; cookie `HttpOnly`, `SameSite=Lax`, `Secure` khi chạy sau HTTPS (Caddy).
+- MCP / REST: `Authorization: Bearer <mã truy cập>` (cùng mã với web).
+- Nâng cấp từ bản cũ: token cũ là `sha256("invite:"+email)` nên ai biết email cũng tính ra được. Lần đầu mở DB bằng code mới (server, crawl, `show_token.py`...), các token kiểu cũ tự đổi sang token ngẫu nhiên, token cũ hết hiệu lực → chạy lại `show_token.py` và gửi mã mới cho mọi người, cập nhật header MCP client.
+- Thu hồi / đổi mã một người (đăng xuất mọi session của họ):
+
+```bash
+sqlite3 data/jobs.db "UPDATE users SET token='$(python3 -c 'import secrets;print(secrets.token_urlsafe(24))')' WHERE email='a@gmail.com'; DELETE FROM sessions WHERE user_id=(SELECT user_id FROM users WHERE email='a@gmail.com');"
+```
+
+## Dọn dữ liệu
+
+- Cuối mỗi lần quét: job quá hạn nộp và job `JOB_STALE_DAYS` (30) ngày không thấy lại trên nguồn vừa quét bị ẩn (`is_active=0`, vẫn còn trong DB).
+- `make purge-dry-run`: xem trước số dòng sẽ xoá. `make purge`: backup vào `data/backups/` rồi xoá job đã ẩn quá `JOB_PURGE_AFTER_DAYS` (90) ngày (trừ job có người lưu) kèm cache AI, xoá `crawl_runs` cũ hơn `CRAWL_RUNS_KEEP_DAYS` (90) ngày, rồi `VACUUM`. Công ty + feedback giữ nguyên.
+
 ## Website
 
-- `http://localhost:8765/` → đăng nhập bằng email đã mời → `/search`
+- `http://localhost:8765/` → đăng nhập bằng email đã mời + mã truy cập → `/search`
 - Search: từ khóa + filter nhóm nghề / quận / lương tối thiểu / hình thức / nguồn
 - Trang việc: mô tả, yêu cầu, quyền lợi, platform/tool, provenance, nút mở trang nguồn
 - Trang công ty: thông tin + **bảng feedback theo nguồn** (rating, số review, confidence, link) + việc đang tuyển
 
 ## MCP server
 
-Endpoint: `POST http://localhost:8765/mcp` · Auth: `Authorization: Bearer <token>`
+Endpoint: `POST http://localhost:8765/mcp` · Auth: `Authorization: Bearer <mã truy cập>` (xem [Đăng nhập & bảo mật](#đăng-nhập--bảo-mật))
 
 | Tool | Mô tả |
 |---|---|
@@ -184,7 +201,7 @@ python -m pytest tests/ -q    # 45 test, chạy offline với fixtures, không c
 
 - API nội bộ (VietnamWorks) có thể đổi bất cứ lúc nào → mỗi adapter có health check riêng, nguồn lỗi không làm sập web/MCP (dữ liệu cũ vẫn phục vụ kèm `last_verified_at`).
 - Không dùng dữ liệu cho mục đích thương mại/redistribute (ToS các nguồn).
-- Token MVP là hash đơn giản — deploy thật cần nâng lên Clerk/OAuth (thiết kế đã tách hẳn để thay).
+- Mã truy cập là shared secret dài hạn (không có magic link/OAuth): gửi qua kênh riêng, lộ thì đổi mã như mục Đăng nhập & bảo mật. Muốn có đăng ký/khôi phục tự phục vụ thì nâng lên magic link hoặc OAuth.
 - MCP là lớp **đọc**, không khởi động crawl trong tool call (crawl chạy background qua `scripts/crawl.py`/cron).
 
 ## Đã verify end-to-end (xem [VERIFICATION.md](VERIFICATION.md))

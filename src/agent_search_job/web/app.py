@@ -1,7 +1,8 @@
 """Website FastAPI: invite-only search UI tiếng Việt + REST API + MCP route.
 
 Theo docs/research-website.md mục 10 (UX) và implementation-plan.md mục 5 (API):
-- Mọi route sản phẩm yêu cầu login (MVP: token / cookie, allowlist email env).
+- Mọi route sản phẩm yêu cầu login: email được mời + mã truy cập (users.token),
+  session lưu trong SQLite (bảng sessions, hết hạn sau 7 ngày).
 - noindex toàn site, không sitemap.
 - REST: /api/jobs, /api/jobs/:id, /api/companies/:id, /api/companies/:id/feedback,
   /api/facets, /api/me/saved-jobs.
@@ -11,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import timedelta
 import re
 import secrets
 from html import unescape
@@ -23,6 +25,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from ..domain.models import utcnow
 from ..mcp.contracts import SearchFilters, ValidationError
 from ..mcp.server import MCPServer, PROTOCOL_VERSION
 from ..storage.store import JobStore
@@ -30,6 +33,7 @@ from ..storage.store import JobStore
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 STATIC_DIR = Path(__file__).parent / "static"
 SESSION_COOKIE = "vnjobs_session"
+SESSION_DAYS = 7
 
 app = FastAPI(title="Agent Search Job", version="0.1.0", docs_url=None, redoc_url=None)
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
@@ -113,20 +117,8 @@ def get_mcp() -> MCPServer:
 
 
 # ---------------------------------------------------------------------------
-# Auth (invite-only MVP)
+# Auth (invite-only: email + mã truy cập; MCP/API dùng cùng mã làm bearer token)
 # ---------------------------------------------------------------------------
-
-def _issue_session(email: str, response: Response) -> str:
-    token = secrets.token_urlsafe(32)
-    # lưu session in-memory MVP; deploy thật dùng store riêng + TTL
-    _SESSIONS[token] = email
-    response.set_cookie(
-        SESSION_COOKIE, token, httponly=True, samesite="lax", max_age=86400 * 7,
-    )
-    return token
-
-
-_SESSIONS: dict[str, str] = {}
 
 
 def _public_mode() -> bool:
@@ -149,17 +141,17 @@ def current_user(
         if _public_mode():
             return guest
         raise HTTPException(401, "Cần đăng nhập")
-    email = _SESSIONS.get(token)
-    if not email:
-        store = get_store()
-        row = store.verify_token(token)
-        if not row:
-            if _public_mode():
-                return guest
-            raise HTTPException(401, "Token không hợp lệ")
-        email = row["email"]
-        _SESSIONS[token] = email
-    return {"email": email, "token": token}
+    store = get_store()
+    # cookie session (còn hạn) trước, rồi tới bearer token = users.token
+    row = store.conn.execute(
+        "SELECT u.* FROM sessions s JOIN users u ON u.user_id=s.user_id "
+        "WHERE s.token=? AND s.expires_at > ?", (token, utcnow().isoformat()),
+    ).fetchone() or store.verify_token(token)
+    if not row:
+        if _public_mode():
+            return guest
+        raise HTTPException(401, "Token không hợp lệ")
+    return {"email": row["email"], "token": token}
 
 
 # ---------------------------------------------------------------------------
@@ -194,16 +186,28 @@ async def home(request: Request):
 async def login(request: Request):
     form = await request.form()
     email = str(form.get("email", "")).strip().lower()
-    if not email:
-        return RedirectResponse("/?error=1", status_code=302)
+    code = str(form.get("code", "")).strip()
     store = get_store()
     row = store.conn.execute(
         "SELECT * FROM users WHERE email=?", (email,)
     ).fetchone()
-    if not row:
-        return RedirectResponse("/?error=not_invited", status_code=302)
+    # cùng một lỗi cho "chưa mời" và "sai mã" để không dò được email nào đã được mời
+    if not row or not code or not secrets.compare_digest(row["token"], code):
+        return RedirectResponse("/?error=1", status_code=302)
+    session = secrets.token_urlsafe(32)
+    now = utcnow()
+    with store.conn:
+        store.conn.execute("DELETE FROM sessions WHERE expires_at <= ?", (now.isoformat(),))
+        store.conn.execute(
+            "INSERT INTO sessions (token, user_id, expires_at) VALUES (?,?,?)",
+            (session, row["user_id"], (now + timedelta(days=SESSION_DAYS)).isoformat()),
+        )
     resp = RedirectResponse("/search", status_code=302)
-    _issue_session(email, resp)
+    # sau Caddy (X-Forwarded-Proto từ 127.0.0.1) scheme là https -> cookie chỉ gửi qua HTTPS
+    resp.set_cookie(
+        SESSION_COOKIE, session, httponly=True, samesite="lax",
+        secure=request.url.scheme == "https", max_age=86400 * SESSION_DAYS,
+    )
     return resp
 
 

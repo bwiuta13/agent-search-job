@@ -9,8 +9,10 @@ schema giữ field tương đương để chuyển lên Postgres sau không đ�
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import secrets
 import sqlite3
 import threading
 from datetime import datetime, timedelta, timezone
@@ -104,6 +106,12 @@ CREATE TABLE IF NOT EXISTS users (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS sessions (
+    token TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    expires_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS llm_enrichment (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     job_id INTEGER NOT NULL REFERENCES jobs(job_id),
@@ -155,6 +163,13 @@ class JobStore:
             with self.conn:
                 self.conn.execute(
                     "ALTER TABLE jobs ADD COLUMN job_level TEXT DEFAULT ''")
+        # token cũ = sha256("invite:"+email)[:32] -> ai biết email cũng tính ra được;
+        # đổi sang token ngẫu nhiên (token cũ hết hiệu lực, chạy lại không đổi gì)
+        for row in self.conn.execute("SELECT user_id, email, token FROM users").fetchall():
+            if row["token"] == hashlib.sha256(f"invite:{row['email']}".encode()).hexdigest()[:32]:
+                with self.conn:
+                    self.conn.execute("UPDATE users SET token=? WHERE user_id=?",
+                                      (secrets.token_urlsafe(24), row["user_id"]))
 
     @property
     def conn(self) -> sqlite3.Connection:
@@ -173,7 +188,8 @@ class JobStore:
             self.conn.executescript(_SCHEMA)
 
     def _seed_users(self):
-        # MVP: invite list qua env ALLOWLIST_EMAILS (comma separated)
+        # invite list qua env ALLOWLIST_EMAILS (comma separated); token ngẫu nhiên vừa là
+        # mã truy cập web vừa là MCP bearer token (lấy bằng scripts/show_token.py)
         emails = [e.strip().lower() for e in
                   os.environ.get("ALLOWLIST_EMAILS", "friend@example.com").split(",")
                   if e.strip()]
@@ -181,7 +197,7 @@ class JobStore:
             with self.conn:
                 self.conn.execute(
                     "INSERT OR IGNORE INTO users(email, token, created_at) VALUES (?,?,?)",
-                    (email, _simple_token(email), utcnow().isoformat()),
+                    (email, secrets.token_urlsafe(24), utcnow().isoformat()),
                 )
 
     # ------------------------------------------------------------------
@@ -274,13 +290,26 @@ class JobStore:
                 ),
             )
 
-    def mark_expired_inactive(self, now: Optional[datetime] = None):
+    def mark_expired_inactive(self, now: Optional[datetime] = None, stale_days: int = 0,
+                              stale_sources: tuple[str, ...] = ()) -> dict:
+        """Ẩn job quá hạn nộp; stale_days > 0: ẩn thêm job của stale_sources không thấy
+        lại trên nguồn quá stale_days ngày (last_verified_at cũ). Chỉ truyền nguồn vừa
+        quét được job, để nguồn lâu không quét không bị ẩn oan. Trả số job mới bị ẩn.
+        """
         now = now or utcnow()
         with self.conn:
-            self.conn.execute(
-                "UPDATE jobs SET is_active=0 WHERE deadline IS NOT NULL AND deadline < ?",
-                (now.isoformat(),),
-            )
+            expired = self.conn.execute(
+                "UPDATE jobs SET is_active=0 WHERE is_active=1 AND deadline IS NOT NULL "
+                "AND deadline < ?", (now.isoformat(),),
+            ).rowcount
+            stale = 0
+            if stale_days > 0 and stale_sources:
+                stale = self.conn.execute(
+                    f"UPDATE jobs SET is_active=0 WHERE is_active=1 AND last_verified_at < ? "
+                    f"AND source IN ({','.join('?' * len(stale_sources))})",
+                    ((now - timedelta(days=stale_days)).isoformat(), *stale_sources),
+                ).rowcount
+        return {"expired": expired, "stale": stale}
 
     def get_job(self, job_id: int) -> Optional[dict]:
         row = self.conn.execute(
@@ -687,9 +716,3 @@ class JobStore:
             "crawl_runs": one("SELECT COUNT(*) FROM crawl_runs"),
             "last_crawl": (self.last_crawl_run() or {}).get("finished_at"),
         }
-
-
-def _simple_token(email: str) -> str:
-    """Token MVP (không phải production security). Deploy thật thì đổi sang Clerk/OAuth."""
-    import hashlib
-    return hashlib.sha256(f"invite:{email}".encode()).hexdigest()[:32]

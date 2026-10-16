@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""In MCP bearer token cho email đã mời (để test MCP client)."""
+"""In mã truy cập cho từng email đã mời: dùng để đăng nhập web và làm MCP bearer token.
+
+Mã ngẫu nhiên (secrets.token_urlsafe) - gửi riêng cho từng người, không đăng công khai.
+"""
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))

@@ -194,6 +194,17 @@ class TestStore:
         store.update_job(jid, normalize_job(make_job(description="JD mới")))
         assert store.get_job(jid)["description"] == "JD mới"
 
+    def test_stale_jobs_hidden_only_for_crawled_sources(self):
+        store = JobStore(":memory:")
+        old = datetime.now(timezone.utc) - timedelta(days=40)
+        stale = store.insert_job(normalize_job(make_job(last_verified_at=old)))
+        other = store.insert_job(normalize_job(make_job(
+            title="Video Editor", source="linkedin", last_verified_at=old)))
+        fresh = store.insert_job(normalize_job(make_job(title="SEO Writer")))
+        hidden = store.mark_expired_inactive(stale_days=30, stale_sources=("vietnamworks",))
+        assert hidden == {"expired": 0, "stale": 1}
+        assert [store.get_job(j)["is_active"] for j in (stale, other, fresh)] == [0, 1, 1]
+
     def test_expired_marked_inactive(self):
         store = JobStore(":memory:")
         j = make_job(deadline=datetime.now(timezone.utc) - timedelta(days=1))
@@ -247,6 +258,25 @@ class TestStore:
         assert len(items) == 1
         assert store.unsave_job_for_user(uid, jid)
         assert not store.saved_jobs_for_user(uid)
+
+    def test_tokens_random_and_predictable_ones_rotated(self, tmp_path):
+        import hashlib
+        db = str(tmp_path / "jobs.db")
+        store = JobStore(db)
+        old = hashlib.sha256(b"invite:friend@example.com").hexdigest()[:32]
+        token = store.conn.execute("SELECT token FROM users").fetchone()["token"]
+        assert token != old and len(token) >= 32
+        assert token != JobStore(":memory:").conn.execute(
+            "SELECT token FROM users").fetchone()["token"]
+        # DB cũ còn token suy ra từ email -> mở lại là đổi sang token ngẫu nhiên
+        with store.conn:
+            store.conn.execute("UPDATE users SET token=?", (old,))
+        store = JobStore(db)
+        assert store.verify_token(old) is None
+        rotated = store.conn.execute("SELECT token FROM users").fetchone()["token"]
+        assert rotated != old
+        # token ngẫu nhiên giữ nguyên qua các lần mở sau
+        assert JobStore(db).verify_token(rotated)["email"] == "friend@example.com"
 
     def test_company_feedback(self):
         from agent_search_job.domain.models import Company, CompanyFeedback
@@ -386,11 +416,45 @@ class TestWebAPI:
         import agent_search_job.web.app as appmod
         appmod._store = None  # reset singleton
         client = TestClient(appmod.app)
-        # login bằng email allowlist mặc định
-        r = client.post("/login", data={"email": "friend@example.com"},
+        # login bằng email allowlist mặc định + mã truy cập (users.token)
+        code = appmod.get_store().conn.execute(
+            "SELECT token FROM users WHERE email='friend@example.com'").fetchone()["token"]
+        r = client.post("/login", data={"email": "friend@example.com", "code": code},
                         follow_redirects=False)
-        assert r.status_code == 302, r.text
+        assert r.status_code == 302 and r.headers["location"] == "/search", r.text
         return client
+
+    def test_login_requires_access_code(self):
+        import hashlib
+        client = self._client()
+        assert client.get("/search").status_code == 200
+        client.cookies.clear()
+        import agent_search_job.web.app as appmod
+        store = appmod.get_store()
+        code = store.conn.execute("SELECT token FROM users").fetchone()["token"]
+        # chỉ biết email / sai mã / email chưa mời -> cùng một lỗi, không có cookie
+        for data in ({"email": "friend@example.com"},
+                     {"email": "friend@example.com", "code": "sai"},
+                     {"email": "nobody@example.com", "code": code}):
+            r = client.post("/login", data=data, follow_redirects=False)
+            assert r.headers["location"] == "/?error=1"
+            assert "vnjobs_session" not in r.cookies
+            assert client.get("/search").status_code == 401
+        # token cũ suy ra từ email không còn dùng được (web lẫn MCP)
+        old = hashlib.sha256(b"invite:friend@example.com").hexdigest()[:32]
+        r = client.post("/login", data={"email": "friend@example.com", "code": old},
+                        follow_redirects=False)
+        assert r.headers["location"] == "/?error=1"
+        r = client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+                        headers={"Authorization": f"Bearer {old}"})
+        assert r.status_code == 403
+        # session hết hạn -> phải đăng nhập lại
+        client.post("/login", data={"email": "friend@example.com", "code": code},
+                    follow_redirects=False)
+        assert client.get("/search").status_code == 200
+        with store.conn:
+            store.conn.execute("UPDATE sessions SET expires_at='2000-01-01T00:00:00+00:00'")
+        assert client.get("/search").status_code == 401
 
     def test_login_and_search(self):
         client = self._client()
@@ -869,6 +933,48 @@ def _mock_httpx(monkeypatch, handler):
         k["transport"] = httpx.MockTransport(handler)
         return real(*a, **k)
     monkeypatch.setattr(httpx, "AsyncClient", factory)
+
+
+class TestPurgeScript:
+    def test_purge_dry_run_then_delete_with_backup(self, tmp_path, capsys):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "purge", Path(__file__).resolve().parent.parent / "scripts" / "purge.py")
+        purge = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(purge)
+
+        db = tmp_path / "jobs.db"
+        store = JobStore(str(db))
+        now = datetime.now(timezone.utc)
+        old = now - timedelta(days=120)  # normalize_job tự gán hạn nộp +30 ngày nếu thiếu
+        gone = store.insert_job(normalize_job(make_job(title="A", last_verified_at=old, deadline=old)))
+        saved = store.insert_job(normalize_job(make_job(title="B", last_verified_at=old, deadline=old)))
+        recent = store.insert_job(normalize_job(make_job(title="C", last_verified_at=now - timedelta(days=10))))
+        active_old = store.insert_job(normalize_job(make_job(title="D", last_verified_at=old, deadline=old)))
+        with store.conn:
+            store.conn.execute("UPDATE jobs SET is_active=0 WHERE job_id IN (?,?,?)",
+                               (gone, saved, recent))
+            uid = store.conn.execute("SELECT user_id FROM users LIMIT 1").fetchone()[0]
+            store.conn.execute("INSERT INTO saved_jobs (user_id, job_id, saved_at) VALUES (?,?,?)",
+                               (uid, saved, now.isoformat()))
+            store.conn.execute("INSERT INTO crawl_runs (queries, started_at) VALUES ('[]', ?)",
+                               (old.isoformat(),))
+        store.set_llm_cache(gone, "m", "v1", "jd_analysis", {"summary": "x"})
+        ids = lambda: {r[0] for r in store.conn.execute("SELECT job_id FROM jobs")}
+
+        dry = purge.main(["--db", str(db), "--dry-run"])
+        assert dry == {"jobs": 1, "saved_kept": 1, "llm_cache": 1, "crawl_runs": 1, "backup": None}
+        assert ids() == {gone, saved, recent, active_old}
+
+        real = purge.main(["--db", str(db)])
+        assert real["jobs"] == 1 and Path(real["backup"]).exists()
+        assert ids() == {saved, recent, active_old}
+        assert store.conn.execute("SELECT COUNT(*) FROM crawl_runs").fetchone()[0] == 0
+        assert store.conn.execute("SELECT COUNT(*) FROM llm_enrichment").fetchone()[0] == 0
+        # backup vẫn còn job đã xoá
+        import sqlite3
+        bk = sqlite3.connect(real["backup"])
+        assert bk.execute("SELECT COUNT(*) FROM jobs WHERE job_id=?", (gone,)).fetchone()[0] == 1
 
 
 class TestVietnamWorksLinkedInJD:
