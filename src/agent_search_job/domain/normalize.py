@@ -228,6 +228,52 @@ def detect_portfolio_required(text: str) -> Optional[bool]:
     return True
 
 
+# Cấp bậc theo text nguồn (vi) - hard-code mapping từng nguồn
+_LEVEL_KEYWORDS: list[tuple[str, str]] = [
+    ("thực tập sinh", "intern"), ("intern", "intern"), ("thực tập", "intern"),
+    ("fresher", "fresher"), ("chưa có kinh nghiệm", "fresher"),
+    ("không yêu cầu kinh nghiệm", "fresher"), ("junior", "junior"),
+    ("senior", "senior"), ("middle", "middle"),
+    ("trưởng nhóm", "lead"), ("team lead", "lead"), ("leader", "lead"),
+    ("supervisor", "lead"), ("giám sát", "lead"),
+    ("trưởng phòng", "manager"), ("giám đốc", "manager"),
+    ("manager", "manager"), ("head of", "manager"), ("director", "manager"),
+]
+
+
+def classify_job_level(title: str, extra_text: str = "",
+                       exp_min: Optional[float] = None,
+                       exp_max: Optional[float] = None) -> str:
+    """Cấp bậc: ưu tiên keyword trong title, rồi extra_text, rồi fallback theo số năm KN.
+
+    Mapping theo năm (không có keyword):
+    - None/<1 -> fresher; 1-2 -> junior; 2-4 -> middle; 4-7 -> senior; >=7 -> senior
+    """
+    t = title.lower()
+    for kw, level in _LEVEL_KEYWORDS:
+        if kw in t:
+            return level
+    x = (extra_text or "").lower()[:800]
+    for kw, level in _LEVEL_KEYWORDS:
+        if kw in x:
+            return level
+    if exp_min is None and exp_max is None:
+        return ""
+    if exp_min is not None and exp_max is not None:
+        mid = (exp_min + exp_max) / 2
+    else:
+        mid = exp_min if exp_min is not None else exp_max
+    if mid is None:
+        return ""
+    if mid < 1:
+        return "fresher"
+    if mid < 2:      # 1-2 năm
+        return "junior"
+    if mid < 4:      # 2-4 năm
+        return "middle"
+    return "senior"
+
+
 def normalize_job(job: NormalizedJob) -> NormalizedJob:
     """Chạy mọi normalize step lên một job đã parse thô."""
     # Nguồn (attr HTML TopCV, JSON VietnamWorks) trả text còn entity "&amp;" -> unescape 1 lần
@@ -245,6 +291,10 @@ def normalize_job(job: NormalizedJob) -> NormalizedJob:
     if not job.district:
         job.district = parse_district(job.address or job.city)
     job.work_mode = parse_work_mode(f"{job.description} {job.requirements}", job.title)
+    job.job_level = classify_job_level(
+        job.title, f"{job.requirements} {job.description}",
+        job.experience_years_min, job.experience_years_max,
+    )
     cluster, conf = classify_role(job.title, job.description)
     job.role_cluster, job.role_cluster_confidence = cluster, conf
     blob = f"{job.title} {job.description} {job.requirements}"

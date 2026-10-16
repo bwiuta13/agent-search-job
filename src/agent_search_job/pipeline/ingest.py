@@ -18,15 +18,63 @@ from ..storage.store import JobStore
 
 log = logging.getLogger("pipeline")
 
-# Query seeds cho Content & Marketing TP.HCM
+# Query seeds - CHỈ Truyền thông đa phương tiện (content, social, video, design, PR, creative)
 DEFAULT_QUERIES = [
-    "content marketing",
+    "content",
     "content creator",
     "social media",
-    "digital marketing",
     "copywriter",
+    "video editor",
+    "graphic design",
     "truyền thông",
+    "creative",
 ]
+
+# Job ngoài phạm vi Truyền thông đa phương tiện -> bỏ, không lưu (kể cả khi nguồn trả về)
+# marketing tổng quát: performance/telesales/event/field marketing, sales, hành chính...
+EXCLUDE_PATTERNS = [
+    r"(?i)\btelesales?\b", r"(?i)\bbán hàng\b", r"(?i)\bsales?\b(?!\s*content)",
+    r"(?i)\btư vấn", r"(?i)\bnhân viên kinh doanh\b",
+    r"(?i)\bperformance marketing\b", r"(?i)\bfield marketing\b",
+    r"(?i)\bevent executive\b", r"(?i)\btổ chức sự kiện\b",
+    r"(?i)\bhr\b", r"(?i)\btuyển dụng\b", r"(?i)\bkế toán\b", r"(?i)\bthu ngân\b",
+    r"(?i)\badmin\b",
+]
+
+# Bắt buộc: title/description phải có ít nhất 1 dấu hiệu Truyền thông đa phương tiện
+INCLUDE_HINTS = [
+    "content", "nội dung", "social", "truyền thông", "media", "pr ", "comms",
+    "copywriter", "seo", "video", "dựng", "editor", "design", "thiết kế",
+    "đồ họa", "graphic", "creative", "sáng tạo", "multimedia", "brand",
+    "campaign", "chiến dịch", "kịch", "storyboard", "tiktok", "fanpage",
+    "photographer", "chụp ảnh", "marcom", "editorial", "writer", "viết",
+    "livestream", "live stream", "host", "mc ", "blogger", "podcast",
+]
+
+
+def in_multimedia_scope(title: str, description: str = "") -> bool:
+    """True nếu job thuộc Truyền thông đa phương tiện; False với job marketing thuần khác.
+
+    Ưu tiên: nếu TITLE có dấu hiệu truyền thông rõ (content/social/video/design...)
+    -> thuộc phạm vi dù có từ 'bán hàng' trong ngữ cảnh (vd 'Trưởng nhóm BH mảng video').
+    """
+    import re
+    t = (title or "").lower()
+    text = f"{t} {(description or '')[:400]}".lower()
+    # dấu hiệu truyền thông xuất hiện trong TITLE -> giữ
+    title_hints = [
+        "content", "nội dung", "social", "truyền thông", "media", "copywriter",
+        "seo", "video", "dựng", "editor", "design", "thiết kế", "đồ họa",
+        "graphic", "creative", "sáng tạo", "multimedia", "pr", "comms",
+        "communication", "livestream", "host", "kịch", "photographer",
+        "chụp ảnh", "marcom", "brand", "writer", "viết", "creator",
+    ]
+    if any(h in t for h in title_hints):
+        return True
+    for pat in EXCLUDE_PATTERNS:
+        if re.search(pat, text[:300]):
+            return False
+    return any(h in text for h in INCLUDE_HINTS)
 
 
 @dataclass
@@ -39,6 +87,7 @@ class CrawlRunResult:
     inserted: int = 0
     updated: int = 0
     duplicates_skipped: int = 0
+    out_of_scope: int = 0
     errors: list[str] = field(default_factory=list)
     health: list[SourceHealth] = field(default_factory=list)
 
@@ -50,6 +99,7 @@ class CrawlRunResult:
             "inserted": self.inserted,
             "updated": self.updated,
             "duplicates_skipped": self.duplicates_skipped,
+            "out_of_scope": self.out_of_scope,
             "errors": self.errors,
             "health": [
                 {
@@ -99,13 +149,17 @@ class IngestPipeline:
                     result.errors.append(msg)
         result.discovered = len(raw_jobs)
 
-        # 2) normalize
+        # 2) normalize + lọc phạm vi: chỉ giữ job Truyền thông đa phương tiện
         for job in raw_jobs:
             try:
                 normalize_job(job)
                 result.normalized += 1
             except Exception as e:  # noqa: BLE001
                 result.errors.append(f"normalize: {job.title}: {e}")
+        before_scope = len(raw_jobs)
+        raw_jobs = [j for j in raw_jobs
+                    if in_multimedia_scope(j.title, j.description or "")]
+        result.out_of_scope = before_scope - len(raw_jobs)
 
         # 3) dedupe + upsert (idempotent: cùng dedupe_key -> update, không insert mới)
         seen_keys: dict[str, int] = {}

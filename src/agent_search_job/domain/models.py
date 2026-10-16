@@ -21,6 +21,27 @@ class RoleCluster(str, Enum):
     CREATIVE_PRODUCTION = "creative_production"
 
 
+class JobLevel(str, Enum):
+    INTERN = "intern"          # thực tập sinh
+    FRESHER = "fresher"        # chưa có kinh nghiệm / dưới 1 năm
+    JUNIOR = "junior"          # 1-2 năm
+    MIDDLE = "middle"          # 2-4 năm
+    SENIOR = "senior"          # 4-7 năm
+    LEAD = "lead"              # trưởng nhóm
+    MANAGER = "manager"        # trưởng phòng / giám đốc
+
+
+JOB_LEVEL_LABELS_VI: dict[str, str] = {
+    JobLevel.INTERN.value: "Thực tập sinh",
+    JobLevel.FRESHER.value: "Fresher / Chưa KN",
+    JobLevel.JUNIOR.value: "1-2 năm",
+    JobLevel.MIDDLE.value: "2-4 năm",
+    JobLevel.SENIOR.value: "4-7 năm",
+    JobLevel.LEAD.value: "Trưởng nhóm",
+    JobLevel.MANAGER.value: "Trưởng phòng/GĐ",
+}
+
+
 class WorkMode(str, Enum):
     ONSITE = "onsite"
     HYBRID = "hybrid"
@@ -159,6 +180,7 @@ class NormalizedJob:
     salary_text: str = ""
     experience_years_min: Optional[float] = None
     experience_years_max: Optional[float] = None
+    job_level: str = ""           # intern/fresher/junior/middle/senior/lead/manager
     work_mode: str = WorkMode.ONSITE.value
     district: str = ""          # quận/huyện cũ hoặc phường/xã mới
     city: str = "Hồ Chí Minh"
@@ -196,6 +218,8 @@ class NormalizedJob:
             "city": self.city,
             "work_mode": self.work_mode,
             "experience_years_min": self.experience_years_min,
+            "experience_years_max": self.experience_years_max,
+            "job_level": self.job_level,
             "deadline": self.deadline.isoformat() if self.deadline else None,
             "is_active": self.is_active,
             "platforms": self.platforms,

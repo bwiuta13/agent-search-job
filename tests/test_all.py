@@ -761,3 +761,93 @@ class TestSmartSearch:
                               "params": {"name": "vn_jobs_smart_search",
                                          "arguments": {"text": "   "}}})
         assert r["result"]["isError"] is True
+
+
+# ---------------------------------------------------------------------------
+# Scope: chỉ Truyền thông đa phương tiện
+# ---------------------------------------------------------------------------
+
+class TestMultimediaScope:
+    def test_scope_filters_marketing_pure_jobs(self):
+        from agent_search_job.pipeline.ingest import in_multimedia_scope
+        assert in_multimedia_scope("Content Marketing Specialist", "viết nội dung")
+        assert in_multimedia_scope("Video Editor", "dựng video")
+        assert in_multimedia_scope("Graphic Designer", "")
+        assert in_multimedia_scope("Trưởng Nhóm Bán Hàng Mảng Video Và Truyền Thông", "")
+        assert in_multimedia_scope("Marketing & Communication Specialist", "")
+        assert not in_multimedia_scope("Telesales", "gọi bán hàng")
+        assert not in_multimedia_scope("Nhân Viên Bán Hàng", "")
+        assert not in_multimedia_scope("Kế toán", "")
+        assert not in_multimedia_scope("Performance Marketing Specialist", "chạy ads")
+        assert not in_multimedia_scope("Event Executive", "tổ chức sự kiện")
+
+    def test_default_queries_only_multimedia(self):
+        from agent_search_job.pipeline.ingest import DEFAULT_QUERIES
+        assert "content" in DEFAULT_QUERIES
+        assert "video editor" in DEFAULT_QUERIES
+        assert "digital marketing" not in DEFAULT_QUERIES
+
+    def test_pipeline_marks_out_of_scope(self):
+        # insert 2 job (1 trong scope, 1 ngoài) qua FakeAdapter -> chỉ 1 được lưu
+        from agent_search_job.pipeline.ingest import IngestPipeline
+        from agent_search_job.domain.models import NormalizedJob
+
+        class FakeAdapter:
+            name = "vietnamworks"
+            async def health_check(self):
+                from agent_search_job.sources.base import SourceHealth
+                return SourceHealth(source=self.name, ok=True, latency_ms=1,
+                                    checked_at=None)
+            async def discover(self, input):
+                for t in ("Content Writer viết bài SEO", "Nhân viên Kinh doanh"):
+                    j = NormalizedJob(title=t, company_name=f"C_{t[:6]}",
+                                      salary_text="10 triệu", description="",
+                                      source=self.name, source_job_id=t)
+                    yield j
+
+        store = JobStore(":memory:")
+        pipeline = IngestPipeline(store, [FakeAdapter()])
+        import asyncio
+        r = asyncio.run(pipeline.run(queries=["content"], max_results_per_query=10))
+        assert r.inserted == 1
+        assert r.out_of_scope == 1
+        items = store.search_jobs(query="")["items"]
+        assert len(items) == 1
+        assert "Content Writer" in items[0]["title"]
+
+
+# ---------------------------------------------------------------------------
+# Job level + company search
+# ---------------------------------------------------------------------------
+
+class TestJobLevelAndCompany:
+    def test_level_classify(self):
+        from agent_search_job.domain.normalize import classify_job_level
+        assert classify_job_level("Thực Tập Sinh Content", "", None, None) == "intern"
+        assert classify_job_level("Senior Content", "", 4, 7) == "senior"
+        assert classify_job_level("Nhân viên Content", "", 1, 2) == "junior"
+        assert classify_job_level("Marketing Manager", "", None, None) == "manager"
+
+    def test_search_by_level_and_company(self):
+        store = JobStore(":memory:")
+        j1 = normalize_job(make_job(title="Senior Content Lead",
+                                    salary_text="20 triệu"))
+        j1.title = "Senior Content Lead"
+        store.insert_job(j1)
+        j2 = normalize_job(make_job(title="Content Intern",
+                                    salary_text="3 triệu"))
+        store.insert_job(j2)
+        assert store.search_jobs(job_levels=["senior"])["total_estimate"] == 1
+        assert store.search_jobs(job_levels=["intern"])["total_estimate"] == 1
+        comps = store.search_company_jobs("Công ty")
+        assert len(comps) == 2
+
+    def test_contracts_level_validation(self):
+        from agent_search_job.mcp.contracts import SearchFilters, ValidationError
+        f = SearchFilters(job_levels=["junior"]).validate()
+        assert f.job_levels == ["junior"]
+        try:
+            SearchFilters(job_levels=["boss"]).validate()
+            raise AssertionError("phải chặn")
+        except ValidationError:
+            pass

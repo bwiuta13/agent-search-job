@@ -39,6 +39,7 @@ class LinkedInAdapter(JobSourceAdapter):
             location=input.location or "Vietnam",
             results_wanted=min(input.max_results, 25),
             hours_old=self.hours_old,
+            linkedin_fetch_description=True,  # JD đầy đủ từ trang chi tiết
         )
         out = []
         for _, r in df.iterrows():

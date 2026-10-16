@@ -18,6 +18,10 @@ MAX_QUERY_LENGTH = 200
 
 VALID_ROLE_CLUSTERS = [c.value for c in RoleCluster]
 VALID_WORK_MODES = [m.value for m in WorkMode]
+VALID_JOB_LEVELS = [
+    "intern", "fresher", "junior", "middle", "senior", "lead", "manager",
+]
+MAX_COMPANY_QUERY_LENGTH = 200
 VALID_SOURCES = ["topcv", "vietnamworks", "itviec", "careerviet", "linkedin", "indeed", "topdev", "all"]
 VALID_DISTRICTS = [
     "Quận 1", "Quận 3", "Quận 4", "Quận 5", "Quận 6", "Quận 7", "Quận 8",
@@ -39,6 +43,8 @@ class SearchFilters:
     salary_min_vnd: Optional[int] = None
     experience_max_years: Optional[float] = None
     work_modes: Optional[list[str]] = None
+    job_levels: Optional[list[str]] = None
+    company_query: Optional[str] = None
     posted_within_days: int = DEFAULT_POSTED_WITHIN_DAYS
     portfolio_required: Optional[bool] = None
     source: str = "all"
@@ -68,6 +74,22 @@ class SearchFilters:
                 raise ValidationError(
                     f"work_modes không hợp lệ: {bad}. Hợp lệ: {VALID_WORK_MODES}"
                 )
+        if self.job_levels:
+            bad = [l for l in self.job_levels if l not in VALID_JOB_LEVELS]
+            if bad:
+                raise ValidationError(
+                    f"job_levels không hợp lệ: {bad}. Hợp lệ: {VALID_JOB_LEVELS}"
+                )
+        if self.company_query is not None:
+            c = self.company_query.strip()
+            if not c:
+                self.company_query = None
+            elif len(c) > MAX_COMPANY_QUERY_LENGTH:
+                raise ValidationError(
+                    f"company_query quá dài (tối đa {MAX_COMPANY_QUERY_LENGTH})"
+                )
+            else:
+                self.company_query = c
         if self.source not in VALID_SOURCES:
             raise ValidationError(
                 f"source không hợp lệ: {self.source}. Hợp lệ: {VALID_SOURCES}"

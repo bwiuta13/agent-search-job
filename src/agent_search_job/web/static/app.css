@@ -345,3 +345,15 @@ ul.cross { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; }
 ul.cross li { position: relative; padding-left: 24px; }
 ul.cross li::before { content: "✓"; position: absolute; left: 0; color: var(--ok, #1a7f4f); font-weight: 700; }
 .red-flags ul.cross li::before { content: "!"; color: #b3541e; }
+
+/* --- Rescan tray + companies page --- */
+.rescan-tray { margin: 10px 0 4px; }
+.rescan summary { cursor: pointer; display: flex; align-items: center; gap: 8px;
+  font-weight: 600; color: var(--muted, #5b6577); padding: 6px 0; }
+.rescan summary:hover { color: var(--ink, #1a2233); }
+.rescan .filters { margin-top: 10px; }
+.rescan .hint { font-size: 12px; color: var(--muted, #5b6577); margin: 8px 0 0; }
+.company-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px; }
+.company-card { display: block; padding: 14px 16px; text-decoration: none; }
+.company-card h3 { margin: 0 0 8px; font-size: 15px; }

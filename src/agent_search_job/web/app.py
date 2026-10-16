@@ -140,6 +140,8 @@ async def search_page(
     role: str = "",
     district: str = "",
     work_mode: str = "",
+    job_level: str = "",
+    company: str = "",
     salary_min: str = "",
     source: str = "all",
     page: int = 1,
@@ -153,12 +155,15 @@ async def search_page(
         role_clusters=[role] if role else None,
         districts=[district] if district else None,
         work_modes=[work_mode] if work_mode else None,
+        job_levels=[job_level] if job_level else None,
+        company_query=company.strip() or None,
         salary_min_vnd=int(salary_min) if salary_min.isdigit() else None,
         source=source,
     ).validate()
     res = store.search_jobs(
         query=filters.query, role_clusters=filters.role_clusters,
         districts=filters.districts, work_modes=filters.work_modes,
+        job_levels=filters.job_levels, company_query=filters.company_query,
         salary_min_vnd=filters.salary_min_vnd, source=filters.source,
         page_size=page_size, cursor=str((page - 1) * page_size),
         posted_within_days=60,
@@ -167,6 +172,7 @@ async def search_page(
     # query string giữ nguyên filter khi chuyển trang (bỏ tham số rỗng / mặc định)
     page_qs = urlencode({k: v for k, v in {
         "q": q, "role": role, "district": district, "work_mode": work_mode,
+        "job_level": job_level, "company": company,
         "salary_min": salary_min, "source": "" if source == "all" else source,
     }.items() if v})
     return templates.TemplateResponse(request, "search.html", {
@@ -175,7 +181,8 @@ async def search_page(
         "total": res["total_estimate"],
         "facets": facets,
         "q": q, "role": role, "district": district,
-        "work_mode": work_mode, "salary_min": salary_min, "source": source,
+        "work_mode": work_mode, "job_level": job_level, "company": company,
+        "salary_min": salary_min, "source": source,
         "page": page, "pages": max(-(-res["total_estimate"] // page_size), 1),
         "page_qs": page_qs,
     })
@@ -251,6 +258,8 @@ async def api_jobs(
     role_clusters: Optional[str] = None,
     districts: Optional[str] = None,
     work_modes: Optional[str] = None,
+    job_levels: Optional[str] = None,
+    company_query: Optional[str] = None,
     salary_min_vnd: Optional[int] = None,
     experience_max_years: Optional[float] = None,
     posted_within_days: int = 14,
@@ -266,6 +275,8 @@ async def api_jobs(
             role_clusters=role_clusters.split(",") if role_clusters else None,
             districts=districts.split(",") if districts else None,
             work_modes=work_modes.split(",") if work_modes else None,
+            job_levels=job_levels.split(",") if job_levels else None,
+            company_query=company_query or None,
             salary_min_vnd=salary_min_vnd,
             experience_max_years=experience_max_years,
             posted_within_days=posted_within_days,
@@ -277,7 +288,8 @@ async def api_jobs(
     store = get_store()
     return store.search_jobs(
         query=f.query, role_clusters=f.role_clusters, districts=f.districts,
-        work_modes=f.work_modes, salary_min_vnd=f.salary_min_vnd,
+        work_modes=f.work_modes, job_levels=f.job_levels,
+        company_query=f.company_query, salary_min_vnd=f.salary_min_vnd,
         experience_max_years=f.experience_max_years,
         posted_within_days=f.posted_within_days,
         portfolio_required=f.portfolio_required, source=f.source,
@@ -309,6 +321,77 @@ async def api_company(company_id: int, user: dict = Depends(current_user)):
 @app.get("/api/companies/{company_id}/feedback")
 async def api_company_feedback(company_id: int, user: dict = Depends(current_user)):
     return {"feedback": get_store().get_feedback(company_id)}
+
+
+@app.get("/companies", response_class=HTMLResponse)
+async def companies_page(
+    request: Request, q: str = "", user: dict = Depends(current_user),
+):
+    """Trang danh sách công ty đang tuyển + tìm theo tên."""
+    store = get_store()
+    facets = store.get_facets()
+    comps = facets.get("companies") or []
+    if q:
+        ql = q.lower()
+        comps = [c for c in comps if ql in c["value"].lower()]
+    # job đếm theo công ty đã có trong facets; gán company_id nếu tìm được
+    return templates.TemplateResponse(request, "companies.html", {
+        "user": user, "companies": comps[:50], "q": q,
+    })
+
+
+@app.get("/api/hiring-companies")
+async def api_companies_search(
+    q: str = "", limit: int = 50, user: dict = Depends(current_user),
+):
+    """API: công ty đang tuyển (tên + số job mở) và job của công ty đó."""
+    store = get_store()
+    facets = store.get_facets()
+    comps = facets.get("companies") or []
+    if q:
+        ql = q.lower()
+        comps = [c for c in comps if ql in c["value"].lower()]
+    out = []
+    for c in comps[:max(1, min(limit, 100))]:
+        jobs = store.search_company_jobs(c["value"], limit=25)
+        out.append({
+            "company_name": c["value"], "open_jobs": c["count"],
+            "jobs": [{"job_id": j["job_id"], "title": j["title"],
+                      "salary_text": j["salary_text"], "district": j["district"],
+                      "source": j["source"]} for j in jobs[:10]],
+        })
+    return {"companies": out}
+
+
+@app.post("/rescan")
+async def rescan(request: Request, user: dict = Depends(current_user)):
+    """User chủ động quét lại nguồn tùy thích (chạy nền, không chặn request)."""
+    from ..pipeline.rescan import RescanManager
+    form = await request.form()
+    source = str(form.get("source") or "all")
+    if source not in ("all", "vietnamworks", "itviec", "careerviet", "linkedin",
+                      "topdev", "topcv"):
+        source = "all"
+    query = str(form.get("query") or "marketing").strip()[:100]
+    try:
+        max_results = max(1, min(50, int(form.get("max_results") or 15)))
+    except (TypeError, ValueError):
+        max_results = 15
+    st = await RescanManager.start(get_store(), source, query, max_results)
+    return RedirectResponse(
+        f"/search?rescan={'running' if st.running else 'busy'}&source={source}",
+        status_code=303,
+    )
+
+
+@app.get("/api/rescan/status")
+async def rescan_status(user: dict = Depends(current_user)):
+    from ..pipeline.rescan import RescanManager
+    st = RescanManager.status()
+    return {
+        "running": st.running, "source": st.source,
+        "started_at": st.started_at, "message": st.message,
+    }
 
 
 @app.get("/api/facets")

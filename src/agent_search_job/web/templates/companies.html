@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% from "_macros.html" import icon %}
+{% block title %}Công ty đang tuyển — Việc làm Content & Marketing TP.HCM{% endblock %}
+{% block content %}
+<section class="tray">
+  <h1>Công ty đang tuyển</h1>
+  <p class="lede">{{ companies | length }} công ty có việc làm Content &amp; Marketing đang mở tại TP.HCM.</p>
+  <form class="filters" method="get" action="/companies">
+    <label class="field q">
+      {{ icon('search') }}
+      <input type="search" name="q" value="{{ q }}" placeholder="Tên công ty, vd: FPT..." aria-label="Tên công ty">
+    </label>
+    <button class="btn go" type="submit">{{ icon('search') }}Tìm công ty</button>
+  </form>
+</section>
+
+{% if companies %}
+<div class="company-grid">
+  {% for c in companies %}
+  <a class="card company-card" href="/search?company={{ c.value | urlencode }}">
+    <h3>{{ c.value }}</h3>
+    <span class="badge green">{{ icon('briefcase') }}{{ c.count }} việc đang tuyển</span>
+  </a>
+  {% endfor %}
+</div>
+{% else %}
+<div class="empty card">
+  {{ icon('search-x') }}
+  <h2>Không tìm thấy công ty</h2>
+  <p>Thử tên khác, hoặc xem <a href="/companies">toàn bộ công ty</a>.</p>
+</div>
+{% endif %}
+{% endblock %}

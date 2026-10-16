@@ -122,3 +122,43 @@ Lưu ý model GLM-5.3 là reasoning model: cần `max_tokens` lớn (1.500–2.5
   lương $1,000-1,700, red flags ("JD bị cắt cụt", "lương rộng chưa rõ cách xếp")
 - Lần 2 (cache): 0.029s
 - 60/60 tests pass (thêm 8 test: NL parse sanitize, rule fallback, JD clip, smart search tool, empty text error)
+
+
+## 9. Hard-code JD từng nguồn + TopDev + cấp bậc/công ty + rescan + scope (16/10/2026)
+
+### JD đầy đủ hard-code theo nguồn (đã verify cấu trúc thật từng trang)
+- `sources/detail_fetchers.py`: ITviec (server render, `Job description`/`Your skills and experience`),
+  CareerViet (`Mô tả công việc`), TopCV (Playwright), TopDev (inline JSON)
+- Kết quả sau rescan: JD đầy đủ (>200 chars): **vietnamworks 77/77, topdev 30/30, topcv 21/45**
+  (LinkedIn bị 429 rate-limit khi fetch JD hàng loạt - giới hạn thật của LinkedIn guest access)
+
+### Nguồn mới: TopDev (api.topdev.vn công khai)
+- `fields[job]=csv` (KHÔNG dùng `fields[job][0]=` -> 500); salary là dict, min/max bị che '*'
+  -> dùng `min_filter`/`max_filter`; HCM = `region_ids=79`
+- Verify: health 200/560ms, discover 10 jobs thật (Marketing Intern ATALINK, Performance Marketing...),
+  rescan topdev: 30 jobs, 30/30 có JD đầy đủ
+
+### Cấp bậc (job_level) + tìm theo công ty
+- `classify_job_level`: title keyword (Thực tập/Senior/Leader/Manager...) -> fallback số năm KN (mid of range)
+- Backfill 119/209 job cũ; phân bố: senior 35, manager 35, middle 17, lead 11, junior 11, intern 6, fresher 4
+- Web `?job_level=senior` = 28 việc; `?company=Publicis` = 5 việc; trang `/companies` 50 cards
+- MCP: `job_levels` + `company_query` (enum chặn 'boss'...) + smart_search hiểu "content senior lương trên 15 triệu"
+  -> parsed: query='content', levels=['senior'], salary=15000000, total 6
+
+### Rescan (user chủ động quét lại nguồn tùy thích)
+- `POST /rescan` (form: source, query, max_results) -> chạy nền qua asyncio task, không chặn request
+- `GET /api/rescan/status` -> {running, source, started_at, message}
+- Verify thật: rescan topdev (30 jobs JD đủ), rescan all (vietnamworks 77, linkedin 62, topcv 45, topdev 30)
+- MCP vẫn read-only (đúng docs) - rescan chỉ qua web/REST
+
+### Scope: chỉ Truyền thông đa phương tiện
+- `in_multimedia_scope`: title có dấu hiệu truyền thông -> giữ; exclude telesales/sales/kinh doanh/
+  performance/event/kế toán/HR; hint bắt buộc (content/social/video/design/creative/...)
+- Deactivate 59 job ngoài scope + restore 16 job có dấu hiệu truyền thông trong title
+- Sau rescan all: **214 job active, 0 job ngoài scope**; clusters: content_marketing 106,
+  social_media 37, communications_pr 24, creative_production 20, copywriter_seo 13,
+  video_production 11, multimedia_design 3
+- DEFAULT_QUERIES đổi theo scope (bỏ 'digital marketing', thêm 'video editor', 'graphic design', 'creative')
+
+### Tests: 66/66 pass (+6: scope filter, default queries, pipeline out_of_scope,
+level classify, search level+company, contracts validation)

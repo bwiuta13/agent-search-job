@@ -20,6 +20,7 @@ import httpx
 
 from ..mcp.contracts import (
     MAX_POSTED_WITHIN_DAYS,
+    VALID_JOB_LEVELS,
     SearchFilters,
     VALID_ROLE_CLUSTERS,
     VALID_WORK_MODES,
@@ -30,9 +31,12 @@ from .llm_enrich import LLMConfig
 SYSTEM_PARSE = """Bạn chuyển câu tìm việc tiếng Việt (tự nhiên) thành JSON filter cho hệ thống tìm việc Content/Marketing TP.HCM.
 Chỉ trả JSON đúng schema, không thêm chữ nào:
 {"query": "từ khóa search còn lại sau khi tách filter", "role_clusters": [], "districts": [],
+ "job_levels": [], "company_query": null,
  "salary_min_vnd": null, "work_modes": [], "posted_within_days": 14, "portfolio_required": null, "source": "all"}
 Quy tắc:
 - role_clusters chỉ nhận: content_marketing, copywriter_seo, social_media, communications_pr, video_production, multimedia_design, creative_production
+- job_levels chỉ nhận: intern, fresher, junior, middle, senior, lead, manager. "thực tập"=intern; "chưa có kinh nghiệm/fresher"=fresher; "junior/1-2 năm"=junior; "middle/2-4 năm"=middle; "senior/4+ năm"=senior; "trưởng nhóm"=lead; "trưởng phòng/quản lý"=manager
+- company_query: tên công ty nếu câu nhắc rõ ("việc ở FPT", "công ty Jamu")
 - work_modes chỉ nhận: onsite, hybrid, remote. "làm từ xa"=remote; "linh hoạt/kết hợp"=hybrid
 - districts: tên quận/huyện TP.HCM (Quận 1, Quận 3, Bình Thạnh, Gò Vấp, Thủ Đức...) nếu câu nói rõ khu vực; [] nếu không
 - salary_min_vnd: số VND/tháng ("trên 15 triệu"=15000000, "15tr+"=15000000); null nếu không nói lương
@@ -156,6 +160,9 @@ class NLQueryParser:
                  if r in VALID_ROLE_CLUSTERS]
         modes = [m for m in (d.get("work_modes") or [])
                  if m in VALID_WORK_MODES]
+        levels = [l for l in (d.get("job_levels") or [])
+                  if l in VALID_JOB_LEVELS]
+        company_q = str(d.get("company_query") or "").strip()[:200] or None
         from ..domain.normalize import parse_district
         districts = []
         for x in (d.get("districts") or [])[:10]:
@@ -188,6 +195,7 @@ class NLQueryParser:
         return SearchFilters(
             query=query, role_clusters=roles or None, districts=districts or None,
             salary_min_vnd=salary, work_modes=modes or None,
+            job_levels=levels or None, company_query=company_q,
             posted_within_days=days, portfolio_required=portfolio,
             source=source, page_size=page_size,
         ).validate()

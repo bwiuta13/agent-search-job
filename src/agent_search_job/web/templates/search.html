@@ -29,6 +29,13 @@
       <option value="{{ w.value }}" {% if w.value == work_mode %}selected{% endif %}>{{ w.value }} ({{ w.count }})</option>
       {% endfor %}
     </select>
+    <select name="job_level" aria-label="Cấp bậc">
+      <option value="">Mọi cấp bậc</option>
+      {% for l in facets.job_levels %}
+      <option value="{{ l.value }}" {% if l.value == job_level %}selected{% endif %}>{{ l.value }} ({{ l.count }})</option>
+      {% endfor %}
+    </select>
+    <input type="search" name="company" value="{{ company }}" placeholder="Công ty, vd: FPT, Jamu..." aria-label="Tên công ty" style="max-width:180px">
     <input type="number" name="salary_min" value="{{ salary_min }}" placeholder="Lương từ (VND)" aria-label="Lương tối thiểu (VND)" min="0" step="1000000">
     <select name="source" aria-label="Nguồn">
       <option value="all" {% if source == 'all' %}selected{% endif %}>Mọi nguồn</option>
@@ -40,6 +47,26 @@
 </section>
 
 <p class="count">Tìm thấy <strong>{{ total }}</strong> việc làm đang mở tại TP.HCM.{% if pages > 1 %} <span class="page-of">Trang {{ page }}/{{ pages }}</span>{% endif %}</p>
+
+<section class="tray rescan-tray">
+  <details class="rescan">
+    <summary>{{ icon('refresh') }} Quét lại dữ liệu nguồn</summary>
+    <form class="filters" method="post" action="/rescan">
+      <select name="source" aria-label="Nguồn cần quét">
+        <option value="all">Mọi nguồn</option>
+        <option value="vietnamworks">VietnamWorks</option>
+        <option value="itviec">ITviec</option>
+        <option value="careerviet">CareerViet</option>
+        <option value="linkedin">LinkedIn</option>
+        <option value="topdev">TopDev</option>
+      </select>
+      <input type="search" name="query" value="marketing" placeholder="Từ khóa quét" aria-label="Từ khóa quét">
+      <input type="number" name="max_results" value="15" min="1" max="50" aria-label="Số kết quả tối đa mỗi nguồn" style="max-width:120px">
+      <button class="btn go" type="submit">{{ icon('refresh') }}Quét ngay</button>
+    </form>
+    <p class="hint">Quét chạy nền — có thể mất 1-2 phút. Dữ liệu hiện tại vẫn dùng được trong lúc chờ.</p>
+  </details>
+</section>
 {% if items %}
   {% for j in items %}{{ ticket(j) }}{% endfor %}
   {% if pages > 1 %}

@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     salary_text TEXT DEFAULT '',
     experience_years_min REAL,
     experience_years_max REAL,
+    job_level TEXT DEFAULT '',
     work_mode TEXT DEFAULT 'onsite',
     district TEXT DEFAULT '',
     city TEXT DEFAULT '',
@@ -144,7 +145,16 @@ class JobStore:
             self.db_path = db_path
             os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
         self._init_schema()
+        self._migrate()
         self._seed_users()
+
+    def _migrate(self):
+        """Thêm cột mới cho DB cũ - SQLite không có ADD COLUMN IF NOT EXISTS."""
+        cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(jobs)")}
+        if "job_level" not in cols:
+            with self.conn:
+                self.conn.execute(
+                    "ALTER TABLE jobs ADD COLUMN job_level TEXT DEFAULT ''")
 
     @property
     def conn(self) -> sqlite3.Connection:
@@ -184,17 +194,18 @@ class JobStore:
             cur = self.conn.execute(
                 """INSERT INTO jobs (dedupe_key, title, company_name, company_id,
                    role_cluster, role_cluster_confidence, salary_min_vnd, salary_max_vnd,
-                   salary_text, experience_years_min, experience_years_max, work_mode,
+                   salary_text, experience_years_min, experience_years_max, job_level, work_mode,
                    district, city, is_hcm, address, platforms, creative_tools,
                    portfolio_required, deadline, description, requirements, benefits,
                    apply_url, languages, is_active, source, source_url, source_job_id,
                    dedupe_key_src, first_seen_at, last_verified_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     job.dedupe_key, job.title, job.company_name, job.company_id,
                     job.role_cluster, job.role_cluster_confidence,
                     job.salary_min_vnd, job.salary_max_vnd, job.salary_text,
                     job.experience_years_min, job.experience_years_max,
+                    job.job_level,
                     job.work_mode, job.district, job.city,
                     int(job.is_hcm), job.address,
                     json.dumps(job.platforms), json.dumps(job.creative_tools),
@@ -222,7 +233,7 @@ class JobStore:
             self.conn.execute(
                 """UPDATE jobs SET title=?, company_name=?, role_cluster=?,
                    role_cluster_confidence=?, salary_min_vnd=?, salary_max_vnd=?,
-                   salary_text=?, experience_years_min=?, experience_years_max=?,
+                   salary_text=?, experience_years_min=?, experience_years_max=?, job_level=?,
                    work_mode=?, district=?, city=?, is_hcm=?, address=?, platforms=?,
                    creative_tools=?, portfolio_required=?, deadline=?, description=?,
                    requirements=?, benefits=?, apply_url=?, languages=?,
@@ -233,7 +244,8 @@ class JobStore:
                     job.title, job.company_name, job.role_cluster,
                     job.role_cluster_confidence, job.salary_min_vnd,
                     job.salary_max_vnd, job.salary_text, job.experience_years_min,
-                    job.experience_years_max, job.work_mode, job.district,
+                    job.experience_years_max, job.job_level,
+                    job.work_mode, job.district,
                     job.city, int(job.is_hcm), job.address,
                     json.dumps(job.platforms), json.dumps(job.creative_tools),
                     (1 if job.portfolio_required else
@@ -283,6 +295,8 @@ class JobStore:
         salary_min_vnd: Optional[int] = None,
         experience_max_years: Optional[float] = None,
         work_modes: Optional[list[str]] = None,
+        job_levels: Optional[list[str]] = None,
+        company_query: Optional[str] = None,
         posted_within_days: int = 14,
         portfolio_required: Optional[bool] = None,
         source: str = "all",
@@ -328,6 +342,13 @@ class JobStore:
             qs = ",".join("?" * len(work_modes))
             where.append(f"work_mode IN ({qs})")
             params.extend(work_modes)
+        if job_levels:
+            qs = ",".join("?" * len(job_levels))
+            where.append(f"job_level IN ({qs})")
+            params.extend(job_levels)
+        if company_query:
+            where.append("LOWER(company_name) LIKE ?")
+            params.append(f"%{company_query.lower()}%")
         if portfolio_required is not None:
             where.append("portfolio_required=1" if portfolio_required else "portfolio_required=0")
         if source != "all":
@@ -390,7 +411,8 @@ class JobStore:
     # ------------------------------------------------------------------
 
     def get_facets(self) -> dict:
-        out: dict = {"role_clusters": [], "districts": [], "work_modes": [], "sources": []}
+        out: dict = {"role_clusters": [], "districts": [], "work_modes": [],
+                     "sources": [], "job_levels": [], "companies": []}
         for row in self.conn.execute(
             "SELECT role_cluster v, COUNT(*) c FROM jobs WHERE is_active=1 GROUP BY role_cluster ORDER BY c DESC"
         ):
@@ -407,6 +429,16 @@ class JobStore:
             "SELECT source v, COUNT(*) c FROM jobs WHERE is_active=1 GROUP BY source ORDER BY c DESC"
         ):
             out["sources"].append({"value": row["v"], "count": row["c"]})
+        for row in self.conn.execute(
+            "SELECT job_level v, COUNT(*) c FROM jobs WHERE is_active=1 AND job_level != '' GROUP BY job_level ORDER BY c DESC"
+        ):
+            out["job_levels"].append({"value": row["v"], "count": row["c"]})
+        for row in self.conn.execute(
+            """SELECT company_name v, COUNT(*) c FROM jobs
+               WHERE is_active=1 AND company_name != '' AND is_hcm=1
+               GROUP BY company_name ORDER BY c DESC LIMIT 50"""
+        ):
+            out["companies"].append({"value": row["v"], "count": row["c"]})
         return out
 
     # ------------------------------------------------------------------
@@ -483,6 +515,15 @@ class JobStore:
             (company_id,),
         ).fetchall()
         return [dict(r) for r in rows]
+
+    def search_company_jobs(self, company_name: str, limit: int = 50) -> list[dict]:
+        """Tất cả job đang tuyển của công ty theo tên (LIKE)."""
+        rows = self.conn.execute(
+            """SELECT * FROM jobs WHERE LOWER(company_name) LIKE ? AND is_active=1
+               ORDER BY job_id DESC LIMIT ?""",
+            (f"%{company_name.lower()}%", limit),
+        ).fetchall()
+        return [self._row_to_dict(r) for r in rows]
 
     def company_open_jobs(self, company_id: int, limit: int = 20) -> list[dict]:
         comp = self.get_company(company_id)

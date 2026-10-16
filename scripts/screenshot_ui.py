@@ -48,6 +48,14 @@ async def main():
             await page.wait_for_timeout(300)
             await page.screenshot(path="/tmp/ui_5_company.png")
 
+        # 5) search với filter cấp bậc + companies
+        await page.goto(f"{BASE}/search?job_level=senior", wait_until="networkidle")
+        await page.wait_for_timeout(400)
+        await page.screenshot(path="/tmp/ui_6_level_filter.png")
+        await page.goto(f"{BASE}/companies", wait_until="networkidle")
+        await page.wait_for_timeout(400)
+        await page.screenshot(path="/tmp/ui_7_companies.png")
+
         await browser.close()
         print("done")
 

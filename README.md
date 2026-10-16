@@ -42,8 +42,9 @@ python scripts/crawl.py --db data/jobs.db --with-topcv --no-linkedin
 # 2) Enrich công ty + feedback
 python scripts/enrich_companies.py data/jobs.db
 
-# 3) Chạy server (web + MCP)
-python scripts/serve.py --db data/jobs.db --port 8765
+# 3) Chạy server (web + MCP) — Ctrl+C để dừng
+make start                       # = python scripts/serve.py --db data/jobs.db --port 8765
+make start PORT=8770             # đổi cổng nếu 8765 đang bận
 
 # 4) Lấy MCP token (email allowlist)
 python scripts/show_token.py data/jobs.db
@@ -122,6 +123,31 @@ python scripts/llm_enrich.py --db data/jobs.db --limit 50
 ```
 
 Sau khi enrich: search sort theo `llm_relevance` (job đúng nhóm Content/Multimedia TP.HCM đứng đầu), badge "phù hợp X%" kèm lý do, field khó (`content_types`, `on_camera_required`, `agency_or_inhouse`, KPI...) lưu trong cache bảng `llm_enrichment`.
+
+## Phạm vi: chỉ Truyền thông đa phương tiện
+
+Pipeline **chỉ lấy và lưu job thuộc Truyền thông đa phương tiện** (content, social media, video, design đồ họa, PR, creative, copywriter/SEO). Job marketing thuần ngoài phạm vi (telesales, kinh doanh/sales, performance marketing, event, kế toán, HR...) bị lọc bỏ ngay trong ingest (`in_multimedia_scope`) — kể cả khi nguồn trả về.
+
+## Tìm theo cấp bậc + công ty + quét lại nguồn
+
+- **Cấp bậc** (`job_level`): intern/fresher/junior/middle/senior/lead/manager — tự phân loại từ tiêu đề + số năm kinh nghiệm; filter trên web (`?job_level=senior`), REST (`?job_levels=senior,junior`) và MCP (`job_levels`).
+- **Công ty đang tuyển**: trang `/companies` (top công ty + số việc mở), filter theo tên công ty trên search (`?company=FPT`), API `/api/hiring-companies?q=...` (kèm danh sách job của từng công ty), MCP `company_query`.
+- **Quét lại nguồn (rescan)**: nút "Quét lại dữ liệu nguồn" trên trang tìm kiếm → `POST /rescan` chọn nguồn (VietnamWorks/ITviec/CareerViet/LinkedIn/TopDev/all) + từ khóa → chạy nền, xem trạng thái `GET /api/rescan/status`. Không chặn request.
+
+## JD đầy đủ hard-code theo từng nguồn
+
+| Nguồn | Cách lấy JD |
+|---|---|
+| VietnamWorks | API trả JD đầy đủ ngay trong search |
+| TopCV | Playwright trang chi tiết (Cloudflare) |
+| ITviec | Server render: `Job description` / `Your skills and experience` |
+| CareerViet | Server render: `Mô tả công việc` / `Yêu cầu ứng viên` |
+| TopDev | API + trang detail inline JSON `"description"` |
+| LinkedIn | JobSpy `linkedin_fetch_description=True` (giới hạn 429 của LinkedIn) |
+
+## Nguồn dữ liệu (6 nguồn)
+
+VietnamWorks (API nội bộ), TopCV (Playwright), LinkedIn (JobSpy), ITviec, CareerViet, **TopDev (API công khai)** — tất cả TP.HCM.
 
 ## Phân tích JD bằng AI (tự động trên trang chi tiết)
 
