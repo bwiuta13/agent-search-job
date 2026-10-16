@@ -141,6 +141,26 @@ class TestNormalizeJob:
         assert "canva" in job.creative_tools and "capcut" in job.creative_tools
         assert job.experience_years_min == 2.0
 
+    def test_html_entities_unescaped(self):
+        # TopCV/VietnamWorks trả "&amp;" trong title/company/description
+        store = JobStore(":memory:")
+        job = normalize_job(make_job(
+            title="Social Media Leader | AI &amp; AUTOMATION",
+            company_name="CÔNG TY TNHH TM&amp;DV JAMU JMC",
+            description="Focus: Beauty &amp; Personal Care &#64;brand",
+            benefits=["Lương &amp; thưởng"],
+        ))
+        assert job.title == "Social Media Leader | AI & AUTOMATION"
+        assert job.company_name == "CÔNG TY TNHH TM&DV JAMU JMC"
+        assert job.description == "Focus: Beauty & Personal Care @brand"
+        assert job.benefits == ["Lương & thưởng"]
+        jid = store.insert_job(job)
+        # fingerprint lấy từ text đã unescape: crawl lại bản "&" sạch vẫn trùng
+        key = dedupe_key("Social Media Leader | AI & AUTOMATION", "CÔNG TY TNHH TM&DV JAMU JMC")
+        assert "amp" not in key.split()
+        assert store.find_by_dedupe_key(key) == jid
+        assert store.get_job(jid)["title"] == "Social Media Leader | AI & AUTOMATION"
+
 
 # ---------------------------------------------------------------------------
 # Storage tests

@@ -1,87 +1,39 @@
+{% from "_macros.html" import icon -%}
 <!DOCTYPE html>
 <html lang="vi">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="robots" content="noindex, nofollow, noarchive">
+  <meta name="theme-color" content="#ffe6ee">
   <title>{% block title %}Việc làm Content & Marketing TP.HCM{% endblock %}</title>
-  <style>
-    :root {
-      --bg: #f6f7f9; --card: #ffffff; --ink: #1a2332; --muted: #5b6577;
-      --accent: #e8542f; --accent-ink: #ffffff; --line: #e3e6ec;
-      --ok: #1a7f4f; --warn: #b3541e;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0; background: var(--bg); color: var(--ink);
-      font-family: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-      line-height: 1.55;
-    }
-    a { color: var(--accent); text-decoration: none; }
-    a:hover { text-decoration: underline; }
-    header.site {
-      background: var(--ink); color: #fff; padding: 12px 20px;
-      display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
-    }
-    header.site a.brand { color: #fff; font-weight: 700; font-size: 17px; }
-    header.site nav a { color: #cfd6e4; margin-right: 14px; font-size: 14px; }
-    header.site .who { margin-left: auto; color: #9aa5ba; font-size: 13px; }
-    main { max-width: 1080px; margin: 24px auto; padding: 0 16px; }
-    .card {
-      background: var(--card); border: 1px solid var(--line); border-radius: 10px;
-      padding: 16px 18px; margin-bottom: 14px;
-    }
-    h1 { font-size: 22px; margin: 6px 0 14px; }
-    .filters { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
-    .filters input, .filters select, .filters button {
-      padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px;
-      background: #fff; font-size: 14px;
-    }
-    .filters button { background: var(--accent); color: var(--accent-ink); font-weight: 600; border: none; cursor: pointer; }
-    .job-card h3 { margin: 0 0 4px; font-size: 16px; }
-    .job-card .meta { color: var(--muted); font-size: 13.5px; display: flex; gap: 12px; flex-wrap: wrap; }
-    .badge {
-      display: inline-block; background: #fdeee8; color: var(--accent);
-      font-size: 12px; padding: 2px 8px; border-radius: 999px; font-weight: 600;
-    }
-    .badge.gray { background: #eef1f5; color: var(--muted); }
-    .badge.green { background: #e7f4ec; color: var(--ok); }
-    .salary { font-weight: 700; color: var(--ok); }
-    .empty { text-align: center; color: var(--muted); padding: 40px 0; }
-    .kv { display: grid; grid-template-columns: 160px 1fr; gap: 6px 12px; font-size: 14.5px; }
-    .kv dt { color: var(--muted); }
-    .kv dd { margin: 0; }
-    .btn {
-      display: inline-block; background: var(--accent); color: #fff; font-weight: 600;
-      padding: 10px 18px; border-radius: 8px; border: none; font-size: 15px; cursor: pointer;
-    }
-    .btn.secondary { background: #eef1f5; color: var(--ink); }
-    .prov { font-size: 12.5px; color: var(--muted); border-top: 1px dashed var(--line); padding-top: 8px; margin-top: 10px; }
-    .warn-note { background: #fdf6ec; border: 1px solid #f2ddba; color: var(--warn);
-                 padding: 10px 12px; border-radius: 8px; font-size: 13.5px; }
-    .login-box { max-width: 420px; margin: 60px auto; text-align: center; }
-    .login-box input { width: 100%; padding: 10px 12px; margin: 8px 0; border: 1px solid var(--line); border-radius: 8px; font-size: 15px; }
-    .error { color: var(--accent); font-size: 14px; }
-    table.simple { width: 100%; border-collapse: collapse; font-size: 14px; }
-    table.simple th, table.simple td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); }
-    footer.site { text-align: center; color: var(--muted); font-size: 12.5px; padding: 24px 0 40px; }
-  </style>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&family=Bricolage+Grotesque:opsz,wght@12..96,700;12..96,800&display=swap">
+  <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
   {% if user %}
+  {% set path = request.url.path %}
   <header class="site">
-    <a class="brand" href="/search">Việc làm Content &amp; Marketing TP.HCM</a>
-    <nav>
-      <a href="/search">Tìm kiếm</a>
-      <a href="/saved">Việc đã lưu</a>
-    </nav>
-    <span class="who">{{ user.email }}</span>
+    <div class="bar">
+      <a class="brand" href="/search">
+        <img src="/static/favicon.svg" alt="">
+        <span class="name">Việc làm Content &amp; Marketing <span class="city">TP.HCM</span></span>
+      </a>
+      <nav>
+        <a href="/search" {% if path == '/search' %}aria-current="page"{% endif %}>{{ icon('search') }}Tìm kiếm</a>
+        <a href="/saved" {% if path == '/saved' %}aria-current="page"{% endif %}>{{ icon('bookmark') }}Việc đã lưu</a>
+      </nav>
+      <span class="who">{{ icon('user') }}{{ user.email }}</span>
+    </div>
   </header>
   {% endif %}
   <main>{% block content %}{% endblock %}</main>
   <footer class="site">
     Dữ liệu thu thập từ TopCV, VietnamWorks, LinkedIn, ITviec, CareerViet ·
-    Đây là website kín (invite-only) · Luôn kiểm tra trang nguồn trước khi ứng tuyển
+    Website kín (invite-only) · Luôn kiểm tra trang nguồn trước khi ứng tuyển
   </footer>
 </body>
 </html>

@@ -1,0 +1,38 @@
+{# Macro dùng chung giữa các trang. Import: {% from "_macros.html" import icon, ticket %} #}
+
+{% macro icon(name) -%}
+<svg class="i" aria-hidden="true"><use href="/static/icons.svg#i-{{ name }}"/></svg>
+{%- endmacro %}
+
+{# Thẻ việc dạng "vé": thân bên trái, cuống lương hồng bên phải (search + saved) #}
+{% macro ticket(j) -%}
+<article class="ticket">
+  <div class="body">
+    <h3><a href="/jobs/{{ j.job_id }}">{{ j.title }}</a></h3>
+    <div class="meta">
+      <span class="company">{{ icon('building') }}{{ j.company_name }}</span>
+      {% if j.district %}<span>{{ icon('map-pin') }}{{ j.district }}</span>{% endif %}
+      {% if j.experience_years_min is not none %}<span>{{ icon('briefcase') }}{{ j.experience_years_min }}{% if j.experience_years_max %}+{% endif %} năm</span>{% endif %}
+    </div>
+    <div class="badges">
+      <span class="badge">{{ j.role_cluster }}</span>
+      <span class="badge lilac">{{ icon('layers') }}{{ j.source }}</span>
+      {% if j.work_mode and j.work_mode != 'onsite' %}<span class="badge green">{{ j.work_mode }}</span>{% endif %}
+      {% if j.llm_relevance %}<span class="badge green" title="{{ j.llm_reason }}">{{ icon('sparkles') }}phù hợp {{ (j.llm_relevance * 100) | round(0) | int }}%</span>{% endif %}
+      {% for p in j.platforms[:4] %}<span class="badge gray">{{ p }}</span>{% endfor %}
+      {% for t in j.creative_tools[:3] %}<span class="badge gray">{{ t }}</span>{% endfor %}
+    </div>
+  </div>
+  <div class="stub">
+    <span class="label">Mức lương</span>
+    {% if j.salary_min_vnd %}
+    <span class="amount">{{ "{:,.0f}".format(j.salary_min_vnd / 1000000) }}{% if j.salary_max_vnd %}–{{ "{:,.0f}".format(j.salary_max_vnd / 1000000) }}{% endif %} <small>triệu</small></span>
+    {% elif j.salary_max_vnd %}
+    <span class="amount">≤ {{ "{:,.0f}".format(j.salary_max_vnd / 1000000) }} <small>triệu</small></span>
+    {% else %}
+    <span class="amount text">{{ j.salary_text or 'Thỏa thuận' }}</span>
+    {% endif %}
+    {% if j.deadline %}<span class="due">{{ icon('hourglass') }}Hạn {{ j.deadline[:10] }}</span>{% endif %}
+  </div>
+</article>
+{%- endmacro %}

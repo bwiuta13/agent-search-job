@@ -1,68 +1,52 @@
 {% extends "base.html" %}
+{% from "_macros.html" import icon, ticket %}
 {% block title %}Tìm kiếm — Việc làm Content & Marketing TP.HCM{% endblock %}
 {% block content %}
-<h1>Tìm việc Content &amp; Marketing tại TP.HCM</h1>
-<form class="filters" method="get" action="/search">
-  <input type="search" name="q" value="{{ q }}" placeholder="Ví dụ: content tiktok, video editor, SEO..." style="flex:1;min-width:220px">
-  <select name="role">
-    <option value="">-- Nhóm nghề --</option>
-    {% for r in facets.role_clusters %}
-    <option value="{{ r.value }}" {% if r.value == role %}selected{% endif %}>
-      {{ r.value }} ({{ r.count }})
-    </option>
-    {% endfor %}
-  </select>
-  <select name="district">
-    <option value="">-- Khu vực --</option>
-    {% for d in facets.districts %}
-    <option value="{{ d.value }}" {% if d.value == district %}selected{% endif %}>{{ d.value }} ({{ d.count }})</option>
-    {% endfor %}
-  </select>
-  <select name="work_mode">
-    <option value="">-- Hình thức --</option>
-    {% for w in facets.work_modes %}
-    <option value="{{ w.value }}" {% if w.value == work_mode %}selected{% endif %}>{{ w.value }} ({{ w.count }})</option>
-    {% endfor %}
-  </select>
-  <input type="number" name="salary_min" value="{{ salary_min }}" placeholder="Lương tối thiểu (VND)" min="0" step="1000000">
-  <select name="source">
-    <option value="all" {% if source == 'all' %}selected{% endif %}>Mọi nguồn</option>
-    {% for s in facets.sources %}
-    <option value="{{ s.value }}" {% if s.value == source %}selected{% endif %}>{{ s.value }} ({{ s.count }})</option>
-    {% endfor %}
-  </select>
-  <button type="submit">Tìm kiếm</button>
-</form>
-<p style="color:var(--muted);font-size:13.5px">Tìm thấy <strong>{{ total }}</strong> việc làm đang mở tại TP.HCM.</p>
+<section class="tray">
+  <h1>Tìm việc Content &amp; Marketing tại TP.HCM</h1>
+  <p class="lede">Lọc theo nhóm nghề, khu vực, mức lương — mở trang nguồn để ứng tuyển.</p>
+  <form class="filters" method="get" action="/search">
+    <label class="field q">
+      {{ icon('search') }}
+      <input type="search" name="q" value="{{ q }}" placeholder="Ví dụ: content tiktok, video editor, SEO..." aria-label="Từ khóa">
+    </label>
+    <button class="btn go" type="submit">{{ icon('search') }}Tìm việc</button>
+    <select name="role" aria-label="Nhóm nghề">
+      <option value="">Mọi nhóm nghề</option>
+      {% for r in facets.role_clusters %}
+      <option value="{{ r.value }}" {% if r.value == role %}selected{% endif %}>{{ r.value }} ({{ r.count }})</option>
+      {% endfor %}
+    </select>
+    <select name="district" aria-label="Khu vực">
+      <option value="">Mọi khu vực</option>
+      {% for d in facets.districts %}
+      <option value="{{ d.value }}" {% if d.value == district %}selected{% endif %}>{{ d.value }} ({{ d.count }})</option>
+      {% endfor %}
+    </select>
+    <select name="work_mode" aria-label="Hình thức">
+      <option value="">Mọi hình thức</option>
+      {% for w in facets.work_modes %}
+      <option value="{{ w.value }}" {% if w.value == work_mode %}selected{% endif %}>{{ w.value }} ({{ w.count }})</option>
+      {% endfor %}
+    </select>
+    <input type="number" name="salary_min" value="{{ salary_min }}" placeholder="Lương từ (VND)" aria-label="Lương tối thiểu (VND)" min="0" step="1000000">
+    <select name="source" aria-label="Nguồn">
+      <option value="all" {% if source == 'all' %}selected{% endif %}>Mọi nguồn</option>
+      {% for s in facets.sources %}
+      <option value="{{ s.value }}" {% if s.value == source %}selected{% endif %}>{{ s.value }} ({{ s.count }})</option>
+      {% endfor %}
+    </select>
+  </form>
+</section>
+
+<p class="count">Tìm thấy <strong>{{ total }}</strong> việc làm đang mở tại TP.HCM.</p>
 {% if items %}
-  {% for j in items %}
-  <div class="card job-card">
-    <h3><a href="/jobs/{{ j.job_id }}">{{ j.title }}</a></h3>
-    <div class="meta">
-      <span>🏢 {{ j.company_name }}</span>
-      {% if j.salary_min_vnd or j.salary_max_vnd %}
-      <span class="salary">
-        {% if j.salary_min_vnd %}{{ "{:,.0f}".format(j.salary_min_vnd / 1000000) }}{% if j.salary_max_vnd %} - {{ "{:,.0f}".format(j.salary_max_vnd / 1000000) }}{% endif %} triệu{% endif %}
-      </span>
-      {% elif j.salary_text %}<span class="salary">{{ j.salary_text }}</span>{% endif %}
-      {% if j.district %}<span>📍 {{ j.district }}</span>{% endif %}
-      {% if j.experience_years_min is not none %}<span>💼 {{ j.experience_years_min }}{% if j.experience_years_max %}+{% endif %} năm</span>{% endif %}
-      {% if j.deadline %}<span>⏳ hạn: {{ j.deadline[:10] }}</span>{% endif %}
-    </div>
-    <div style="margin-top:8px">
-      <span class="badge">{{ j.role_cluster }}</span>
-      <span class="badge gray">{{ j.source }}</span>
-      {% if j.work_mode != 'onsite' %}<span class="badge green">{{ j.work_mode }}</span>{% endif %}
-      {% if j.llm_relevance %}<span class="badge green" title="{{ j.llm_reason }}">phù hợp {{ (j.llm_relevance * 100) | round(0) | int }}%</span>{% endif %}
-      {% for p in j.platforms[:4] %}<span class="badge gray">{{ p }}</span>{% endfor %}
-      {% for t in j.creative_tools[:3] %}<span class="badge gray">{{ t }}</span>{% endfor %}
-    </div>
-  </div>
-  {% endfor %}
+  {% for j in items %}{{ ticket(j) }}{% endfor %}
 {% else %}
   <div class="empty card">
-    Không tìm thấy việc phù hợp. Thử bỏ bớt bộ lọc, hoặc dùng từ khóa khác
-    như "content", "social media", "truyền thông".
+    {{ icon('search-x') }}
+    <h2>Chưa có việc khớp bộ lọc</h2>
+    <p>Thử bỏ bớt bộ lọc, hoặc dùng từ khóa khác như "content", "social media", "truyền thông".</p>
   </div>
 {% endif %}
 {% endblock %}

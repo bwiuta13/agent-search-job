@@ -7,6 +7,7 @@ Rule-based theo docs/research-website.md mục 6-7:
 """
 from __future__ import annotations
 
+import html
 import re
 from typing import Optional
 
@@ -229,6 +230,12 @@ def detect_portfolio_required(text: str) -> Optional[bool]:
 
 def normalize_job(job: NormalizedJob) -> NormalizedJob:
     """Chạy mọi normalize step lên một job đã parse thô."""
+    # Nguồn (attr HTML TopCV, JSON VietnamWorks) trả text còn entity "&amp;" -> unescape 1 lần
+    # trước mọi bước khác để dedupe_key và text hiển thị dùng "&" thật.
+    for f in ("title", "company_name", "salary_text", "address", "city", "district",
+              "description", "requirements"):
+        setattr(job, f, html.unescape(getattr(job, f) or ""))
+    job.benefits = [html.unescape(b) for b in job.benefits]
     lo, hi, text = parse_salary(job.salary_text or "")
     job.salary_min_vnd, job.salary_max_vnd, job.salary_text = lo, hi, text
     if not job.experience_years_min and not job.experience_years_max:

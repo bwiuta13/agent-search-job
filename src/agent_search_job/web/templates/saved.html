@@ -1,17 +1,16 @@
 {% extends "base.html" %}
+{% from "_macros.html" import icon, ticket %}
 {% block title %}Việc đã lưu{% endblock %}
 {% block content %}
 <h1>Việc đã lưu</h1>
+<p class="lede">Những việc bạn đánh dấu để xem lại.</p>
 {% if items %}
-  {% for j in items %}
-  <div class="card job-card">
-    <h3><a href="/jobs/{{ j.job_id }}">{{ j.title }}</a></h3>
-    <div class="meta"><span>🏢 {{ j.company_name }}</span>
-    {% if j.salary_min_vnd %}<span class="salary">{{ "{:,.0f}".format(j.salary_min_vnd / 1000000) }} triệu{% if j.salary_max_vnd %} - {{ "{:,.0f}".format(j.salary_max_vnd / 1000000) }}{% endif %}</span>{% endif %}
-    {% if j.deadline %}<span>⏳ hạn: {{ j.deadline[:10] }}</span>{% endif %}</div>
-  </div>
-  {% endfor %}
+  {% for j in items %}{{ ticket(j) }}{% endfor %}
 {% else %}
-<div class="empty card">Chưa lưu việc nào. Hết thúc tìm kiếm, bấm "Lưu" ở trang chi tiết việc.</div>
+<div class="empty card">
+  {{ icon('bookmark') }}
+  <h2>Chưa lưu việc nào</h2>
+  <p>Việc bạn lưu sẽ hiện ở đây. <a href="/search">Tìm việc ngay</a></p>
+</div>
 {% endif %}
 {% endblock %}

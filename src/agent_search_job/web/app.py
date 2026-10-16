@@ -17,6 +17,7 @@ from typing import Optional
 
 from fastapi import Cookie, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from ..mcp.contracts import SearchFilters, ValidationError
@@ -24,10 +25,13 @@ from ..mcp.server import MCPServer, PROTOCOL_VERSION
 from ..storage.store import JobStore
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
+STATIC_DIR = Path(__file__).parent / "static"
 SESSION_COOKIE = "vnjobs_session"
 
 app = FastAPI(title="Agent Search Job", version="0.1.0", docs_url=None, redoc_url=None)
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+# CSS, icon sprite (Lucide), favicon — public, không chứa dữ liệu
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 _store: Optional[JobStore] = None
 _mcp: Optional[MCPServer] = None
