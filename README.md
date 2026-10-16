@@ -53,6 +53,44 @@ python scripts/show_token.py data/jobs.db
 Mời người dùng: set env `ALLOWLIST_EMAILS="a@gmail.com,b@gmail.com"` trước lần chạy đầu (mặc định `friend@example.com`).
 Mở public (không cần đăng nhập, cả web/API/MCP): để `ALLOWLIST_EMAILS=` rỗng trong `.env` (server tự nạp `.env`; biến set trong shell được ưu tiên) hoặc chạy `ALLOWLIST_EMAILS= make start`. Khách xem/tìm được mọi thứ nhưng không lưu việc được; không set biến thì vẫn invite-only.
 
+## Chạy bằng Docker Compose
+
+Cấu hình này dành cho VM **Google Compute Engine** chạy sau Nginx. Container chỉ mở app tại
+`127.0.0.1:8765`, vì vậy không cần mở port `8765` trên GCP Firewall. Nginx tiếp tục nhận traffic
+public ở port `80/443` và proxy vào app như cấu hình hiện tại.
+
+Trong lần chuyển đầu tiên từ service systemd cũ, dừng service để nhường port cho Docker:
+
+```bash
+sudo systemctl disable --now agent-search-job
+```
+
+Sau đó, trên server từ thư mục dự án:
+
+```bash
+# Tuỳ chọn: chỉnh email được mời và cấu hình LLM.
+cp -n .env.example .env
+
+# Build image và chạy app nền; các lần sau vẫn dùng cùng lệnh này.
+docker compose up -d
+
+# Kiểm tra trạng thái.
+docker compose ps
+curl http://127.0.0.1:8765/health
+```
+
+Nếu không tạo `.env`, Compose dùng các giá trị mặc định an toàn trong `compose.yaml`.
+Thư mục `data/` và `backups/` được mount từ host nên database và backup không mất khi build lại container.
+
+Các lệnh vận hành thường dùng:
+
+```bash
+docker compose logs -f app
+docker compose up -d --build       # build lại sau khi cập nhật source
+docker compose run --rm app python scripts/crawl.py --db data/jobs.db --max-results 15
+docker compose down
+```
+
 ## Đăng nhập & bảo mật
 
 - Mỗi email được mời có một **mã truy cập ngẫu nhiên** (`secrets.token_urlsafe(24)`, lưu ở `users.token`), tạo khi email được seed. Lấy bằng `python scripts/show_token.py data/jobs.db` rồi gửi riêng cho từng người.

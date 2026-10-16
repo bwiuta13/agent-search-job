@@ -1,0 +1,26 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    init: true
+    ports:
+      - "127.0.0.1:${PORT:-8765}:8765"
+    environment:
+      ALLOWLIST_EMAILS: "${ALLOWLIST_EMAILS-friend@example.com}"
+      JOBS_DB: data/jobs.db
+      AI_PROVIDER: "${AI_PROVIDER-openai}"
+      AI_TEXT_MODEL: "${AI_TEXT_MODEL-z-ai/glm-5.3}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY-}"
+      OPENAI_BASE_URL: "${OPENAI_BASE_URL-https://tokenplan.api.greennode.ai/v1}"
+      OPENAI_REQUEST_TIMEOUT_SECONDS: "${OPENAI_REQUEST_TIMEOUT_SECONDS-90}"
+      JOB_STALE_DAYS: "${JOB_STALE_DAYS-30}"
+      JOB_PURGE_AFTER_DAYS: "${JOB_PURGE_AFTER_DAYS-90}"
+      CRAWL_RUNS_KEEP_DAYS: "${CRAWL_RUNS_KEEP_DAYS-90}"
+    volumes:
+      - ./data:/app/data
+      - ./backups:/app/backups
+    shm_size: 512mb
+    security_opt:
+      - no-new-privileges:true
