@@ -145,9 +145,11 @@ Pipeline **chỉ lấy và lưu job thuộc Truyền thông đa phương tiện*
 | TopDev | API + trang detail inline JSON `"description"` |
 | LinkedIn | JobSpy `linkedin_fetch_description=True` (giới hạn 429 của LinkedIn) |
 
-## Nguồn dữ liệu (6 nguồn)
+## Nguồn dữ liệu (7 nguồn)
 
-VietnamWorks (API nội bộ), TopCV (Playwright), LinkedIn (JobSpy), ITviec, CareerViet, **TopDev (API công khai)** — tất cả TP.HCM.
+VietnamWorks (API nội bộ), TopCV (Playwright), LinkedIn (JobSpy), ITviec, CareerViet, TopDev (API công khai), **VNG Careers** (career.vng.com.vn - trang careers công ty lớn, JD đầy đủ sẵn trong `__NEXT_DATA__`) — tất cả TP.HCM.
+
+Nguồn công ty lớn khác đã điều tra: FPT (fpt.com.vn/careers 404, fpt-software.com 403 Cloudflare) — không có endpoint công khai; việc FPT Software vẫn bắt được qua VietnamWorks/ITviec.
 
 ## Phân tích JD bằng AI (tự động trên trang chi tiết)
 

@@ -162,3 +162,28 @@ Lưu ý model GLM-5.3 là reasoning model: cần `max_tokens` lớn (1.500–2.5
 
 ### Tests: 66/66 pass (+6: scope filter, default queries, pipeline out_of_scope,
 level classify, search level+company, contracts validation)
+
+
+## 10. Nguồn VNG Careers (công ty lớn) (16/10/2026)
+
+### career.vng.com.vn - Next.js server render
+- `__NEXT_DATA__` -> `props.pageProps.jobs`: 10 jobs/trang, total 78, JD đầy đủ (1660-3929 chars)
+  ngay trong list - không cần fetch detail riêng
+- Job HCM: `location == "Thành phố Hồ Chí Minh"`; detail URL `/vi/job/{slug}`
+- Verify thật: health 200/505ms, discover 30 jobs (27 HCM), rescan qua web `POST /rescan source=vng`
+- Scope lọc đúng: chỉ giữ job truyền thông (Creative Executive VNGGames); loại đúng
+  Business Development Representative + Project Management Intern (không phải truyền thông)
+
+### FPT: không thêm được (điều tra thật)
+- fpt.com.vn/careers + /tuyen-dung -> 404; jobs.fpt.com.vn + career.fpt.com.vn -> không DNS
+- fpt-software.com/careers -> 403 Cloudflare (chặn curl lẫn httpx)
+- Ghi nhận trong docs là hạn chế; FPT Software jobs đã có qua nguồn VietnamWorks/ITviec
+
+### Fix scope boundary (false positive)
+- 'pr' trong 'Representative', 'design' trong 'designed' không còn tính là dấu hiệu truyền thông
+  (word boundary `(?<![a-zà-ỹ])hint(?![a-zà-ỹ])` cho cả title hints + text hints)
+- Deactivate thêm 15 job match nhầm; active còn 202, 0 ngoài scope
+
+### Trạng thái cuối: 202 job active scope Truyền thông đa phương tiện
+- vietnamworks 72, linkedin 55, topcv 44, topdev 30, vng 1 (VNG tuyển ít vị trí truyền thông)
+- 68/68 tests pass (+2: VNG adapter parse __NEXT_DATA__, boundary false positive)

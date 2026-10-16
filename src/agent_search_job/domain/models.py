@@ -56,6 +56,7 @@ class SourceName(str, Enum):
     LINKEDIN = "linkedin"
     INDEED = "indeed"
     TOPDEV = "topdev"
+    VNG = "vng"
 
 
 ROLE_CLUSTER_LABELS_VI: dict[str, str] = {

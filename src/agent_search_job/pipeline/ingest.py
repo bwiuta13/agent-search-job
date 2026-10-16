@@ -61,7 +61,9 @@ def in_multimedia_scope(title: str, description: str = "") -> bool:
     import re
     t = (title or "").lower()
     text = f"{t} {(description or '')[:400]}".lower()
-    # dấu hiệu truyền thông xuất hiện trong TITLE -> giữ
+    # dấu hiệu truyền thông xuất hiện trong TITLE -> giữ (word boundary để
+    # 'pr' trong 'Representative' không tính)
+    import re as _re2
     title_hints = [
         "content", "nội dung", "social", "truyền thông", "media", "copywriter",
         "seo", "video", "dựng", "editor", "design", "thiết kế", "đồ họa",
@@ -69,12 +71,27 @@ def in_multimedia_scope(title: str, description: str = "") -> bool:
         "communication", "livestream", "host", "kịch", "photographer",
         "chụp ảnh", "marcom", "brand", "writer", "viết", "creator",
     ]
-    if any(h in t for h in title_hints):
-        return True
+    for h in title_hints:
+        if _re2.search(r"(?<![a-zà-ỹ])" + _re2.escape(h) + r"(?![a-zà-ỹ])", t):
+            return True
     for pat in EXCLUDE_PATTERNS:
         if re.search(pat, text[:300]):
             return False
-    return any(h in text for h in INCLUDE_HINTS)
+    # hint cần ranh giới từ để tránh false positive ('designed' chứa 'design')
+    import re as _re
+    boundary_hints = [
+        "content", "nội dung", "social", "truyền thông", "media", "comms",
+        "copywriter", "seo", "video", "dựng", "editor", "design", "thiết kế",
+        "đồ họa", "graphic", "creative", "sáng tạo", "multimedia", "brand",
+        "campaign", "chiến dịch", "kịch", "storyboard", "tiktok", "fanpage",
+        "photographer", "chụp ảnh", "marcom", "editorial", "writer", "viết",
+        "livestream", "live stream", "blogger", "podcast", "host", "mc",
+    ]
+    for h in boundary_hints:
+        if _re.search(r"(?<![a-zà-ỹ])" + _re.escape(h) + r"(?![a-zà-ỹ])", text):
+            return True
+    # hint dạng cụm có sẵn (trailing space giữ ngữ cảnh): 'pr ', 'mc '
+    return any(h in text for h in ("pr ", "mc "))
 
 
 @dataclass

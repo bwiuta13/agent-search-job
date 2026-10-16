@@ -851,3 +851,63 @@ class TestJobLevelAndCompany:
             raise AssertionError("phải chặn")
         except ValidationError:
             pass
+
+
+# ---------------------------------------------------------------------------
+# VNG Careers adapter (scraping __NEXT_DATA__)
+# ---------------------------------------------------------------------------
+
+class TestVNGCareers:
+    def test_vng_adapter_parses_next_data(self):
+        import asyncio
+        import agent_search_job.sources.vng_careers as vc
+        from agent_search_job.sources.vng_careers import VNGCareersAdapter
+        from agent_search_job.pipeline.ingest import DiscoverInput
+
+        sample = {"props": {"pageProps": {"jobs": [
+            {"job_id": "6922", "title": "Creative Executive, VNGGames",
+             "location": "Thành phố Hồ Chí Minh", "description": "<p>x" * 30,
+             "slug": "6922-creative-executive-vnggames-vi"},
+            {"job_id": "1", "title": "Admin Executive",
+             "location": "Sydney", "description": "y", "slug": "1-admin"},
+        ], "total": 2}}}
+
+        class FakeResp:
+            status_code = 200
+            text = ('<html><script id="__NEXT_DATA__" type="application/json">'
+                    + json.dumps(sample) + "</script></html>")
+
+        class FakeClient:
+            def __init__(self, *a, **k): pass
+            async def __aenter__(self): return self
+            async def __aexit__(self, *a): return False
+            async def get(self, *a, **k): return FakeResp()
+
+        orig = vc.httpx.AsyncClient
+        vc.httpx.AsyncClient = FakeClient
+        try:
+            async def run():
+                ad = VNGCareersAdapter()
+                jobs = []
+                async for j in ad.discover(DiscoverInput(query="creative", max_results=10)):
+                    jobs.append(j)
+                return jobs
+            jobs = asyncio.run(run())
+            assert len(jobs) == 2
+            hcm = [j for j in jobs if j.is_hcm]
+            assert len(hcm) == 1
+            assert "Creative Executive" in hcm[0].title
+            assert hcm[0].company_name == "VNG Corporation"
+            assert hcm[0].source == "vng"
+        finally:
+            vc.httpx.AsyncClient = orig
+
+    def test_scope_boundary_no_false_positive(self):
+        from agent_search_job.pipeline.ingest import in_multimedia_scope
+        # 'pr' trong 'Representative' không được tính là PR
+        assert not in_multimedia_scope(
+            "Business Development Representative, Instantia",
+            "this role is designed as a pathway")
+        # 'design' trong 'designed' không được tính
+        assert not in_multimedia_scope("Fintech Analyst", "system designed for trading")
+        assert in_multimedia_scope("PR Executive", "truyền thông")

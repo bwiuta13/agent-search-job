@@ -20,6 +20,7 @@ from agent_search_job.sources.itviec import ITviecAdapter
 from agent_search_job.sources.careerviet import CareerVietAdapter
 from agent_search_job.sources.topcv import TopCVAdapter
 from agent_search_job.sources.topdev import TopDevAdapter
+from agent_search_job.sources.vng_careers import VNGCareersAdapter
 
 
 async def main():
@@ -46,6 +47,7 @@ async def main():
     adapters.append(ITviecAdapter())
     adapters.append(CareerVietAdapter())
     adapters.append(TopDevAdapter())
+    adapters.append(VNGCareersAdapter())
     if args.with_topcv:
         adapters.append(TopCVAdapter())
 

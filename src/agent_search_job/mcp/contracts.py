@@ -22,7 +22,8 @@ VALID_JOB_LEVELS = [
     "intern", "fresher", "junior", "middle", "senior", "lead", "manager",
 ]
 MAX_COMPANY_QUERY_LENGTH = 200
-VALID_SOURCES = ["topcv", "vietnamworks", "itviec", "careerviet", "linkedin", "indeed", "topdev", "all"]
+VALID_SOURCES = ["topcv", "vietnamworks", "itviec", "careerviet", "linkedin",
+                 "indeed", "topdev", "vng", "all"]
 VALID_DISTRICTS = [
     "Quận 1", "Quận 3", "Quận 4", "Quận 5", "Quận 6", "Quận 7", "Quận 8",
     "Quận 10", "Quận 11", "Quận 12", "Bình Thạnh", "Gò Vấp", "Phú Nhuận",

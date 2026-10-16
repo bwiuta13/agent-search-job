@@ -80,6 +80,9 @@ async def _run_rescan(store: JobStore, source: str, query: str,
         if source in ("all", "topdev"):
             from ..sources.topdev import TopDevAdapter
             adapters.append(TopDevAdapter())
+        if source in ("all", "vng"):
+            from ..sources.vng_careers import VNGCareersAdapter
+            adapters.append(VNGCareersAdapter())
         pipeline = IngestPipeline(store, adapters)
         await pipeline.run(queries=[query, "content", "marketing"],
                            max_results_per_query=max_results)

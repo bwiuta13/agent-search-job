@@ -370,7 +370,7 @@ async def rescan(request: Request, user: dict = Depends(current_user)):
     form = await request.form()
     source = str(form.get("source") or "all")
     if source not in ("all", "vietnamworks", "itviec", "careerviet", "linkedin",
-                      "topdev", "topcv"):
+                      "topdev", "topcv", "vng"):
         source = "all"
     query = str(form.get("query") or "marketing").strip()[:100]
     try:
