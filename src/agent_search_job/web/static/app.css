@@ -438,7 +438,7 @@ ul.cross li::before { content: "✓"; position: absolute; left: 0; color: var(--
   content: ""; position: absolute; left: 9px; top: 13px; width: 6px; height: 6px;
   border-radius: 50%; background: var(--rose);
 }
-.scan-log li:last-child { background: #fff0f5; }
+.scan-log .lv-info:last-child { background: #fff0f5; }
 .scan-log time {
   flex: none; font: 600 11.5px/1.9 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-variant-numeric: tabular-nums; padding: 0 7px; border-radius: 6px;
@@ -447,7 +447,7 @@ ul.cross li::before { content: "✓"; position: absolute; left: 0; color: var(--
 .scan-log .msg { flex: 1; min-width: 0; }
 .scan-log .t-src {
   display: inline-block; padding: 0 7px; border-radius: 999px; font-size: 12px; font-weight: 700;
-  line-height: 1.7; background: var(--lilac-bg); color: var(--lilac); text-transform: capitalize;
+  line-height: 1.7; background: var(--lilac-bg); color: var(--lilac);
 }
 .scan-log .t-kw { color: var(--accent); font-weight: 600; }
 .scan-log .t-res { color: var(--mint); font-weight: 700; }

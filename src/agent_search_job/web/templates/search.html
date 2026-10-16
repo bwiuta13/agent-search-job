@@ -105,7 +105,7 @@
       if (m.index > last) el.appendChild(document.createTextNode(text.slice(last, m.index)));
       var span = document.createElement("span");
       for (var g = 1; g < HL_CLASS.length; g++) if (m[g] !== undefined) { span.className = HL_CLASS[g]; break; }
-      span.textContent = m[0];
+      span.textContent = m[1] ? (NAMES[m[1].toLowerCase()] || m[0]) : m[0];
       el.appendChild(span);
       last = m.index + m[0].length;
     }
