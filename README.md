@@ -81,6 +81,8 @@ curl http://127.0.0.1:8765/health
 
 Nếu không tạo `.env`, Compose dùng các giá trị mặc định an toàn trong `compose.yaml`.
 Thư mục `data/` và `backups/` được mount từ host nên database và backup không mất khi build lại container.
+Nếu VM đã có database do service systemd tạo, đặt `DATA_DIR`, `BACKUP_DIR`, `APP_UID` và `APP_GID`
+trong `.env` như ví dụ để container dùng trực tiếp dữ liệu cũ mà không phải sao chép.
 
 Các lệnh vận hành thường dùng:
 

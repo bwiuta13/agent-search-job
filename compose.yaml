@@ -3,6 +3,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        APP_UID: "${APP_UID:-10001}"
+        APP_GID: "${APP_GID:-10001}"
     restart: unless-stopped
     init: true
     ports:
@@ -19,8 +22,8 @@ services:
       JOB_PURGE_AFTER_DAYS: "${JOB_PURGE_AFTER_DAYS-90}"
       CRAWL_RUNS_KEEP_DAYS: "${CRAWL_RUNS_KEEP_DAYS-90}"
     volumes:
-      - ./data:/app/data
-      - ./backups:/app/backups
+      - "${DATA_DIR:-./data}:/app/data"
+      - "${BACKUP_DIR:-./backups}:/app/backups"
     shm_size: 512mb
     security_opt:
       - no-new-privileges:true

@@ -2,6 +2,9 @@
 
 FROM python:3.13-slim
 
+ARG APP_UID=10001
+ARG APP_GID=10001
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
@@ -12,7 +15,8 @@ WORKDIR /app
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends gosu \
     && rm -rf /var/lib/apt/lists/* \
-    && useradd --create-home --uid 10001 app
+    && groupadd --gid "${APP_GID}" app \
+    && useradd --create-home --uid "${APP_UID}" --gid "${APP_GID}" app
 
 # Copy dependency metadata and source first so dependency installation stays cached.
 COPY pyproject.toml README.md ./
