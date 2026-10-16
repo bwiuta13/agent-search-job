@@ -68,6 +68,7 @@ Endpoint: `POST http://localhost:8765/mcp` · Auth: `Authorization: Bearer <toke
 | `vn_jobs_get_job` | Bản ghi đầy đủ theo job_id (mô tả, yêu cầu, benefits, provenance) |
 | `vn_jobs_get_company` | Hồ sơ công ty + các việc đang tuyển |
 | `vn_jobs_get_company_feedback` | Feedback theo nguồn kèm rating/review count/confidence; không có → `unavailable` |
+| `vn_jobs_smart_search` | Tìm bằng **câu tiếng Việt tự nhiên** (LLM parse): "tìm việc content tiktok lương trên 15 triệu ở quận 1", "việc social media mới đăng tuần này có thể remote". Trả kèm `parsed_filters` + `parser.llm_used` |
 | `vn_jobs_get_market_facets` | Các lựa chọn lọc hiện có để xây truy vấn hợp lệ |
 
 Ví dụ gọi thử:
@@ -121,6 +122,17 @@ python scripts/llm_enrich.py --db data/jobs.db --limit 50
 ```
 
 Sau khi enrich: search sort theo `llm_relevance` (job đúng nhóm Content/Multimedia TP.HCM đứng đầu), badge "phù hợp X%" kèm lý do, field khó (`content_types`, `on_camera_required`, `agency_or_inhouse`, KPI...) lưu trong cache bảng `llm_enrichment`.
+
+## Phân tích JD bằng AI (tự động trên trang chi tiết)
+
+Mở trang chi tiết việc → hệ thống gọi LLM phân tích JD gốc thành khối **"Phân tích JD bằng AI"**:
+- Tóm tắt vai trò (ai làm gì, phù hợp ai)
+- Trách nhiệm chính / Yêu cầu bắt buộc / Ưu tiên nếu có
+- Quyền lợi nổi bật + **Điểm cần lưu ý (red flags)** — vd "JD bị cắt cụt", "lương thoả thuận chưa rõ"
+- Kết quả **cache** trong bảng `llm_enrichment` (lần sau mở trang = tức thì); LLM lỗi → trang vẫn hiện JD gốc bình thường
+- REST: `GET /api/jobs/{id}` trả thêm `jd_analysis`
+
+Lưu ý: LLM chỉ chạy cho job có JD ≥ 80 ký tự (hiện chỉ VietnamWorks có JD đầy đủ; TopCV/LinkedIn listing không kèm JD — cần fetch trang chi tiết nguồn, nằm trong backlog).
 
 ## Test
 

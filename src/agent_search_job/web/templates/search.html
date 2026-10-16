@@ -39,9 +39,28 @@
   </form>
 </section>
 
-<p class="count">Tìm thấy <strong>{{ total }}</strong> việc làm đang mở tại TP.HCM.</p>
+<p class="count">Tìm thấy <strong>{{ total }}</strong> việc làm đang mở tại TP.HCM.{% if pages > 1 %} <span class="page-of">Trang {{ page }}/{{ pages }}</span>{% endif %}</p>
 {% if items %}
   {% for j in items %}{{ ticket(j) }}{% endfor %}
+  {% if pages > 1 %}
+  {% set base = '/search?' ~ (page_qs ~ '&' if page_qs else '') %}
+  <nav class="pager" aria-label="Phân trang">
+    {% if page > 1 %}<a class="pg step" href="{{ base }}page={{ page - 1 }}" rel="prev" aria-label="Trang trước">{{ icon('chevron-left') }}<span>Trước</span></a>
+    {% else %}<span class="pg step" aria-disabled="true">{{ icon('chevron-left') }}<span>Trước</span></span>{% endif %}
+    <span class="nums">
+      {% set ns = namespace(gap=false) %}
+      {% for n in range(1, pages + 1) %}
+        {% if n == 1 or n == pages or (n - page)|abs <= 1 %}
+          {% set ns.gap = false %}
+          {% if n == page %}<span class="pg" aria-current="page">{{ n }}</span>
+          {% else %}<a class="pg" href="{{ base }}page={{ n }}" aria-label="Trang {{ n }}">{{ n }}</a>{% endif %}
+        {% elif not ns.gap %}{% set ns.gap = true %}<span class="gap" aria-hidden="true">…</span>{% endif %}
+      {% endfor %}
+    </span>
+    {% if page < pages %}<a class="pg step" href="{{ base }}page={{ page + 1 }}" rel="next" aria-label="Trang sau"><span>Sau</span>{{ icon('chevron-right') }}</a>
+    {% else %}<span class="pg step" aria-disabled="true"><span>Sau</span>{{ icon('chevron-right') }}</span>{% endif %}
+  </nav>
+  {% endif %}
 {% else %}
   <div class="empty card">
     {{ icon('search-x') }}

@@ -98,3 +98,27 @@ Lưu ý model GLM-5.3 là reasoning model: cần `max_tokens` lớn (1.500–2.5
 - Indeed adapter: research 15/10 cho thấy cần `country_indeed="vietnam"`; chưa crawl trong run cuối vì đã từng bị chặn — bật thêm khi cần.
 - `posted_within_days` lọc theo `last_verified_at`; crawl định kỳ mỗi ngày sẽ giữ mốc này chính xác.
 - Session in-memory: restart server mất session cookie (đăng nhập lại) — chấp nhận cho MVP.
+
+
+## 8. LLM thông minh: NL query + phân tích JD (16/10/2026)
+
+### vn_jobs_smart_search (LLM parse câu tự nhiên)
+```text
+"tìm việc content tiktok lương trên 12 triệu"
+  -> llm_used: true, parsed: query="content tiktok", salary_min_vnd=12000000
+  -> total: 69 (Social Content Creator Jamu Spa 9-12tr, Social Media Content Executive 13-15tr...)
+"việc social media mới đăng tuần này ở Bình Thạnh"
+  -> parsed: role_clusters=["social_media"], districts=["Bình Thạnh"], posted_within_days=7
+  -> total: 1 (Social Media Leader | Bình Thạnh)
+```
+- Sanitize: role/mode ngoài enum bị loại ("ceo", "teleport"), posted_days clamp 60, districts chỉ giữ quận HCM
+- LLM không cấu hình/lỗi -> fallback rule parser (lương "trên X triệu", keyword role, remote)
+
+### Bug search sửa kèm: multi-word query
+"content tiktok" cũ = 0 kết quả (LIKE cả cụm liền) -> giờ tách từ, OR từng từ: **73 kết quả**
+
+### Phân tích JD trên trang chi tiết (job 36 - Marketing Assistant Manager, VietnamWorks)
+- Lần 1 (LLM thật): 19.7s -> đầy đủ: tóm tắt, 3 trách nhiệm, 5 yêu cầu, nice-to-have,
+  lương $1,000-1,700, red flags ("JD bị cắt cụt", "lương rộng chưa rõ cách xếp")
+- Lần 2 (cache): 0.029s
+- 60/60 tests pass (thêm 8 test: NL parse sanitize, rule fallback, JD clip, smart search tool, empty text error)

@@ -14,6 +14,7 @@ import os
 import secrets
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlencode
 
 from fastapi import Cookie, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -141,8 +142,11 @@ async def search_page(
     work_mode: str = "",
     salary_min: str = "",
     source: str = "all",
+    page: int = 1,
     user: dict = Depends(current_user),
 ):
+    page_size = 25
+    page = max(page, 1)
     store = get_store()
     filters = SearchFilters(
         query=q or None,
@@ -156,9 +160,15 @@ async def search_page(
         query=filters.query, role_clusters=filters.role_clusters,
         districts=filters.districts, work_modes=filters.work_modes,
         salary_min_vnd=filters.salary_min_vnd, source=filters.source,
-        page_size=25, posted_within_days=60,
+        page_size=page_size, cursor=str((page - 1) * page_size),
+        posted_within_days=60,
     )
     facets = store.get_facets()
+    # query string giữ nguyên filter khi chuyển trang (bỏ tham số rỗng / mặc định)
+    page_qs = urlencode({k: v for k, v in {
+        "q": q, "role": role, "district": district, "work_mode": work_mode,
+        "salary_min": salary_min, "source": "" if source == "all" else source,
+    }.items() if v})
     return templates.TemplateResponse(request, "search.html", {
         "user": user,
         "items": res["items"],
@@ -166,6 +176,8 @@ async def search_page(
         "facets": facets,
         "q": q, "role": role, "district": district,
         "work_mode": work_mode, "salary_min": salary_min, "source": source,
+        "page": page, "pages": max(-(-res["total_estimate"] // page_size), 1),
+        "page_qs": page_qs,
     })
 
 
@@ -175,7 +187,29 @@ async def job_detail(request: Request, job_id: int, user: dict = Depends(current
     job = store.get_job(job_id)
     if not job:
         raise HTTPException(404, "Không tìm thấy việc làm")
-    return templates.TemplateResponse(request, "job_detail.html", {"user": user, "job": job})
+    # LLM phân tích JD (cache theo model+prompt, lỗi LLM -> None, trang vẫn render JD thô)
+    analysis = await get_jd_analysis(store, job)
+    return templates.TemplateResponse(request, "job_detail.html", {
+        "user": user, "job": job, "analysis": analysis,
+    })
+
+
+async def get_jd_analysis(store: JobStore, job: dict) -> Optional[dict]:
+    """Phân tích JD bằng LLM với cache trong bảng llm_enrichment (kind='jd_analysis')."""
+    from ..pipeline.llm_enrich import LLMConfig, PROMPT_VERSION
+    from ..pipeline.jd_analysis import JDAnalyzer
+    cfg = LLMConfig.from_env()
+    if not cfg.ok:
+        return None
+    cached = store.get_llm_cache(job["job_id"], cfg.model, PROMPT_VERSION, "jd_analysis")
+    if cached:
+        return cached
+    result = await JDAnalyzer(cfg).analyze(job)
+    if result is None:
+        return None
+    payload = result.to_dict()
+    store.set_llm_cache(job["job_id"], cfg.model, PROMPT_VERSION, "jd_analysis", payload)
+    return payload
 
 
 @app.get("/companies/{company_id}", response_class=HTMLResponse)
@@ -253,9 +287,13 @@ async def api_jobs(
 
 @app.get("/api/jobs/{job_id}")
 async def api_job(job_id: int, user: dict = Depends(current_user)):
-    job = get_store().get_job(job_id)
+    store = get_store()
+    job = store.get_job(job_id)
     if not job:
         raise HTTPException(404, "Không tìm thấy")
+    analysis = await get_jd_analysis(store, job)
+    if analysis:
+        job["jd_analysis"] = analysis
     return job
 
 

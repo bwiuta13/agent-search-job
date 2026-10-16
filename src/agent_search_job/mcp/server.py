@@ -111,6 +111,32 @@ FEEDBACK_OUTPUT_SCHEMA = {
     },
 }
 
+SMART_SEARCH_INPUT_SCHEMA = {
+    "type": "object",
+    "required": ["text"],
+    "properties": {
+        "text": {"type": "string", "maxLength": 300,
+                 "description": "Câu tìm việc tiếng Việt tự nhiên, vd 'tìm việc content tiktok lương trên 15 triệu ở quận 1'"},
+        "page_size": {"type": "integer", "minimum": 1, "maximum": 25, "default": 10},
+        "cursor": {"type": "string"},
+    },
+    "additionalProperties": False,
+}
+
+SMART_SEARCH_OUTPUT_SCHEMA = {
+    "type": "object",
+    "required": ["items", "next_cursor", "total_estimate", "parsed_filters", "parser"],
+    "properties": {
+        "items": {"type": "array", "items": {"type": "object"}},
+        "next_cursor": {"type": ["string", "null"]},
+        "total_estimate": {"type": "integer"},
+        "parsed_filters": {"type": "object",
+                           "description": "Filter đã parse từ câu tự nhiên"},
+        "parser": {"type": "object",
+                   "description": "llm_used, note - parser nào đã xử lý"},
+    },
+}
+
 FACETS_INPUT_SCHEMA = {"type": "object", "properties": {}, "additionalProperties": False}
 
 FACETS_OUTPUT_SCHEMA = {
@@ -154,6 +180,16 @@ TOOLS = [
         ),
         "inputSchema": FEEDBACK_INPUT_SCHEMA,
         "outputSchema": FEEDBACK_OUTPUT_SCHEMA,
+    },
+    {
+        "name": "vn_jobs_smart_search",
+        "description": (
+            "Tìm việc bằng câu tiếng Việt tự nhiên (LLM parse). "
+            "Ví dụ: 'tìm việc content tiktok lương trên 15 triệu ở quận 1', "
+            "'việc social media mới đăng tuần này có thể remote'."
+        ),
+        "inputSchema": SMART_SEARCH_INPUT_SCHEMA,
+        "outputSchema": SMART_SEARCH_OUTPUT_SCHEMA,
     },
     {
         "name": "vn_jobs_get_market_facets",
@@ -258,6 +294,8 @@ class MCPServer:
             return self._get_company(args)
         if name == "vn_jobs_get_company_feedback":
             return self._get_feedback(args)
+        if name == "vn_jobs_smart_search":
+            return await self._smart_search(args)
         if name == "vn_jobs_get_market_facets":
             return self._get_facets(args)
         raise ValidationError(f"Unknown tool: {name}")
@@ -335,6 +373,52 @@ class MCPServer:
                 ),
             }
         return {"status": "ok", "feedback": feedback}
+
+    async def _smart_search(self, args: dict) -> dict:
+        text = str(args.get("text", "")).strip()
+        if not text:
+            raise ValidationError("text không được để trống")
+        if len(text) > 300:
+            raise ValidationError("text tối đa 300 ký tự")
+        try:
+            page_size = int(args.get("page_size") or 10)
+            page_size = max(1, min(25, page_size))
+        except (TypeError, ValueError):
+            page_size = 10
+        from ..pipeline.nl_query import NLQueryParser
+        parsed = await NLQueryParser().parse(text)
+        f = parsed.filters
+        f.page_size = page_size
+        f.cursor = args.get("cursor")
+        res = self.store.search_jobs(
+            query=f.query, role_clusters=f.role_clusters, districts=f.districts,
+            salary_min_vnd=f.salary_min_vnd,
+            experience_max_years=f.experience_max_years,
+            work_modes=f.work_modes, posted_within_days=f.posted_within_days,
+            portfolio_required=f.portfolio_required, source=f.source,
+            page_size=f.page_size, cursor=f.cursor,
+        )
+        last = self.store.last_crawl_run() or {}
+        return {
+            "items": res["items"],
+            "next_cursor": res["next_cursor"],
+            "total_estimate": res["total_estimate"],
+            "parsed_filters": {
+                "query": f.query, "role_clusters": f.role_clusters,
+                "districts": f.districts, "salary_min_vnd": f.salary_min_vnd,
+                "work_modes": f.work_modes,
+                "posted_within_days": f.posted_within_days,
+                "portfolio_required": f.portfolio_required, "source": f.source,
+            },
+            "parser": {
+                "llm_used": parsed.llm_used,
+                "note": parsed.note,
+                "raw_text": parsed.raw_text,
+            },
+            "data_freshness": {
+                "last_crawl_finished_at": last.get("finished_at"),
+            },
+        }
 
     def _get_facets(self, args: dict) -> dict:
         return self.store.get_facets()

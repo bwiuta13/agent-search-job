@@ -209,6 +209,25 @@ class TestStore:
         res = store.search_jobs(query="không-tồn-tại-xyz")
         assert res["total_estimate"] == 0
 
+    def test_cursor_pages_cover_all_jobs_with_relevance_order(self):
+        # sort theo LLM relevance trước job_id: cursor phải đi hết mọi job, không trùng/sót
+        store = JobStore(":memory:")
+        ids = [store.insert_job(normalize_job(make_job(
+            title=f"Content Writer {i}", source_job_id=str(i),
+            source_url=f"https://example.com/job/{i}",
+        ))) for i in range(5)]
+        store.set_llm_cache(ids[0], "m", "v1", "relevance", {"relevance": 0.9})
+        seen, cursor = [], None
+        while True:
+            res = store.search_jobs(page_size=2, cursor=cursor)
+            assert res["total_estimate"] == 5
+            seen += [i["job_id"] for i in res["items"]]
+            cursor = res["next_cursor"]
+            if not cursor:
+                break
+        assert seen[0] == ids[0]
+        assert sorted(seen) == sorted(ids)
+
     def test_saved_jobs(self):
         store = JobStore(":memory:")
         jid = store.insert_job(normalize_job(make_job()))
@@ -285,7 +304,8 @@ class TestMCPServer:
         names = [t["name"] for t in r["result"]["tools"]]
         assert names == [
             "vn_jobs_search_jobs", "vn_jobs_get_job", "vn_jobs_get_company",
-            "vn_jobs_get_company_feedback", "vn_jobs_get_market_facets",
+            "vn_jobs_get_company_feedback", "vn_jobs_smart_search",
+            "vn_jobs_get_market_facets",
         ]
         # mọi tool có inputSchema + outputSchema
         for t in r["result"]["tools"]:
@@ -369,6 +389,24 @@ class TestWebAPI:
         assert r.status_code == 200
         assert "Việc làm" in r.text or "Tìm việc" in r.text
 
+    def test_search_pagination_keeps_filters(self):
+        client = self._client()
+        import agent_search_job.web.app as appmod
+        store = appmod.get_store()
+        for i in range(30):
+            store.insert_job(normalize_job(make_job(
+                title=f"Content Writer {i}", source_job_id=str(i),
+                source_url=f"https://example.com/job/{i}",
+            )))
+        r1 = client.get("/search?q=content&source=vietnamworks")
+        assert r1.text.count('class="ticket"') == 25
+        assert "page=2" in r1.text and "q=content" in r1.text
+        r2 = client.get("/search?q=content&source=vietnamworks&page=2")
+        assert r2.status_code == 200
+        assert r2.text.count('class="ticket"') == 5
+        assert "Content Writer 0<" in r1.text + r2.text
+        assert 'value="content"' in r2.text and "page=1" in r2.text
+
     def test_unauthenticated_blocked(self):
         from fastapi.testclient import TestClient
         import os
@@ -413,7 +451,7 @@ class TestWebAPI:
                         headers={"Authorization": f"Bearer {token}"})
         assert r.status_code == 200
         tools = r.json()["result"]["tools"]
-        assert len(tools) == 5
+        assert len(tools) == 6
 
     def test_mcp_origin_check(self):
         client = self._client()
@@ -538,3 +576,188 @@ class TestLLMEnrich:
         res = store.search_jobs(query="content")
         item = next(i for i in res["items"] if i["job_id"] == jid)
         assert item.get("llm_relevance") == 0.8
+
+
+# ---------------------------------------------------------------------------
+# NL query parser (LLL mock + rule fallback)
+# ---------------------------------------------------------------------------
+
+class TestNLQuery:
+    async def test_llm_parse_sanitizes(self):
+        import agent_search_job.pipeline.nl_query as nq
+        import agent_search_job.pipeline.llm_enrich as le
+
+        class FakeResp:
+            def raise_for_status(self): pass
+            def json(self):
+                return {"choices": [{"message": {"content": json.dumps({
+                    "query": "content tiktok",
+                    "role_clusters": ["social_media", "ceo"],
+                    "districts": ["Bình Thạnh", "Hà Nội"],
+                    "salary_min_vnd": 12000000,
+                    "work_modes": ["remote", "teleport"],
+                    "posted_within_days": 999,
+                    "portfolio_required": "maybe",
+                    "source": "topcv",
+                })}}]}
+
+        class FakeClient:
+            def __init__(self, *a, **k): pass
+            async def __aenter__(self): return self
+            async def __aexit__(self, *a): return False
+            async def post(self, *a, **k): return FakeResp()
+
+        orig = nq.httpx.AsyncClient
+        nq.httpx.AsyncClient = FakeClient
+        try:
+            parser = nq.NLQueryParser(le.LLMConfig(api_key="k"))
+            parsed = await parser.parse("tìm việc content tiktok lương trên 12 triệu")
+            f = parsed.filters
+            assert parsed.llm_used
+            assert f.query == "content tiktok"
+            assert f.role_clusters == ["social_media"]          # 'ceo' bị loại
+            assert f.districts == ["Bình Thạnh"]                # 'Hà Nội' ngoài HCM bị loại
+            assert f.salary_min_vnd == 12_000_000
+            assert f.work_modes == ["remote"]                   # 'teleport' bị loại
+            assert f.posted_within_days == 60                   # 999 -> clamp 60
+            assert f.portfolio_required is None                 # "maybe" -> None
+            assert f.source == "topcv"
+        finally:
+            nq.httpx.AsyncClient = orig
+
+    async def test_no_key_falls_back_to_rules(self):
+        from agent_search_job.pipeline.nl_query import NLQueryParser
+        from agent_search_job.pipeline.llm_enrich import LLMConfig
+        parser = NLQueryParser(LLMConfig(api_key=""))
+        parsed = await parser.parse("việc tiktok remote lương trên 15 triệu")
+        assert not parsed.llm_used
+        f = parsed.filters
+        assert f.salary_min_vnd == 15_000_000
+        assert f.work_modes == ["remote"]
+        assert f.role_clusters == ["social_media"]
+
+    async def test_llm_error_falls_back(self):
+        import agent_search_job.pipeline.nl_query as nq
+        from agent_search_job.pipeline.llm_enrich import LLMConfig
+
+        class Boom:
+            def __init__(self, *a, **k): raise RuntimeError("down")
+
+        orig = nq.httpx.AsyncClient
+        nq.httpx.AsyncClient = Boom
+        try:
+            parser = nq.NLQueryParser(LLMConfig(api_key="k"))
+            parsed = await parser.parse("việc video editor")
+            assert not parsed.llm_used
+            assert "fallback" in parsed.note
+        finally:
+            nq.httpx.AsyncClient = orig
+
+
+# ---------------------------------------------------------------------------
+# JD analysis (LLM mock)
+# ---------------------------------------------------------------------------
+
+class TestJDAnalysis:
+    async def test_analyze_parses_and_clips(self):
+        import agent_search_job.pipeline.jd_analysis as ja
+        from agent_search_job.pipeline.llm_enrich import LLMConfig
+
+        class FakeResp:
+            def raise_for_status(self): pass
+            def json(self):
+                return {"choices": [{"message": {"content": json.dumps({
+                    "summary": "Vai trò content toàn diện tại agency",
+                    "key_responsibilities": ["Viết nội dung", "Quản lý fanpage",
+                                             "Chụp ảnh sản phẩm", "Đăng bài",
+                                             "Báo cáo KPI", "Thứ 6 sẽ bị cắt"],
+                    "requirements": ["2 năm kinh nghiệm"],
+                    "nice_to_have": ["CapCut"],
+                    "salary_hint": "15-20 triệu",
+                    "perks": ["Bonus quý"],
+                    "red_flags": ["Lương thoả thuận"],
+                })}}]}
+
+        class FakeClient:
+            def __init__(self, *a, **k): pass
+            async def __aenter__(self): return self
+            async def __aexit__(self, *a): return False
+            async def post(self, *a, **k): return FakeResp()
+
+        orig = ja.httpx
+        import httpx as real_httpx
+        ja.httpx = type("m", (), {"AsyncClient": FakeClient})
+        try:
+            an = ja.JDAnalyzer(LLMConfig(api_key="k"))
+            result = await an.analyze({
+                "title": "Content Executive",
+                "company_name": "Agency X",
+                "description": "x" * 300, "requirements": "y" * 100,
+                "salary_text": "Thoả thuận",
+            })
+            assert result is not None
+            assert len(result.key_responsibilities) == 5  # clip 6 -> 5
+            assert all(len(r) <= 120 for r in result.key_responsibilities)
+            assert result.salary_hint == "15-20 triệu"
+        finally:
+            ja.httpx = orig
+
+    async def test_short_jd_returns_none(self):
+        from agent_search_job.pipeline.jd_analysis import JDAnalyzer
+        from agent_search_job.pipeline.llm_enrich import LLMConfig
+        an = JDAnalyzer(LLMConfig(api_key="k"))
+        assert await an.analyze({"title": "t", "description": "ngắn",
+                                 "requirements": "", "company_name": "c"}) is None
+
+
+# ---------------------------------------------------------------------------
+# Smart search (MCP tool qua MCPServer in-process, LLM mock)
+# ---------------------------------------------------------------------------
+
+class TestSmartSearch:
+    async def test_smart_search_tool(self):
+        import agent_search_job.pipeline.nl_query as nq
+        from agent_search_job.pipeline.llm_enrich import LLMConfig
+        from agent_search_job.mcp.server import MCPServer
+
+        class FakeResp:
+            def raise_for_status(self): pass
+            def json(self):
+                return {"choices": [{"message": {"content": json.dumps({
+                    "query": "content", "role_clusters": [], "districts": [],
+                    "salary_min_vnd": None, "work_modes": [],
+                    "posted_within_days": 60, "portfolio_required": None,
+                    "source": "all"})}}]}
+
+        class FakeClient:
+            def __init__(self, *a, **k): pass
+            async def __aenter__(self): return self
+            async def __aexit__(self, *a): return False
+            async def post(self, *a, **k): return FakeResp()
+
+        orig = nq.httpx.AsyncClient
+        nq.httpx.AsyncClient = FakeClient
+        import os
+        os.environ["OPENAI_API_KEY"] = "k"
+        try:
+            store = JobStore(":memory:")
+            store.insert_job(normalize_job(make_job()))
+            srv = MCPServer(store)
+            r = await srv.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                                  "params": {"name": "vn_jobs_smart_search",
+                                             "arguments": {"text": "việc content nhé"}}})
+            sc = r["result"]["structuredContent"]
+            assert sc["parser"]["llm_used"]
+            assert sc["total_estimate"] >= 1
+            assert sc["parsed_filters"]["query"] == "content"
+        finally:
+            nq.httpx.AsyncClient = orig
+            del os.environ["OPENAI_API_KEY"]
+
+    async def test_smart_search_empty_text_error(self):
+        from agent_search_job.mcp.server import MCPServer
+        srv = MCPServer(JobStore(":memory:"))
+        r = await srv.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                              "params": {"name": "vn_jobs_smart_search",
+                                         "arguments": {"text": "   "}}})
+        assert r["result"]["isError"] is True

@@ -296,18 +296,18 @@ class JobStore:
             where.append("is_active=1")
         where.append("is_hcm=1")
         if query:
-            # tìm không dấu: so khớp cả title/description bằng LIKE thuần
-            import unicodedata
-            def fold(s: str) -> str:
-                s = unicodedata.normalize("NFD", s.lower())
-                s = "".join(c for c in s if unicodedata.category(c) != "Mn")
-                return s
-            # dùng LIKE trên bản gốc + một số biến thể thường gặp
-            like = f"%{query.lower()}%"
-            where.append(
-                "(LOWER(title) LIKE ? OR LOWER(description) LIKE ? OR LOWER(company_name) LIKE ?)"
-            )
-            params.extend([like, like, like])
+            # tách từ: mỗi từ khớp riêng (OR) trong title/description/company
+            import re as _re
+            words = [w for w in _re.split(r"\s+", query.lower().strip()) if len(w) >= 2][:6]
+            if words:
+                conds = []
+                for w in words:
+                    like = f"%{w}%"
+                    conds.append(
+                        "(LOWER(title) LIKE ? OR LOWER(description) LIKE ? OR LOWER(company_name) LIKE ?)"
+                    )
+                    params.extend([like, like, like])
+                where.append("(" + " OR ".join(conds) + ")")
         if role_clusters:
             qs = ",".join("?" * len(role_clusters))
             where.append(f"role_cluster IN ({qs})")
@@ -337,12 +337,12 @@ class JobStore:
         cutoff = (utcnow() - timedelta(days=posted_within_days)).isoformat()
         where.append("(last_verified_at >= ? OR first_seen_at >= ?)")
         params.extend([cutoff, cutoff])
-        # cursor pagination: cursor = last job_id của trang trước (DESC)
+        # cursor pagination: cursor = offset (opaque string). Không dùng "job_id < last"
+        # vì thứ tự sort theo relevance trước nên keyset theo job_id sẽ sót/trùng job.
+        offset = 0
         if cursor:
             try:
-                last_id = int(cursor)
-                where.append("job_id < ?")
-                params.append(last_id)
+                offset = max(int(cursor), 0)
             except ValueError:
                 pass  # cursor hỏng -> bỏ qua, trả trang đầu
 
@@ -356,7 +356,7 @@ class JobStore:
             "job_id DESC"
         )
         rows = self.conn.execute(
-            f"SELECT * {base}{order} LIMIT ?", (*params, page_size + 1)
+            f"SELECT * {base}{order} LIMIT ? OFFSET ?", (*params, page_size + 1, offset)
         ).fetchall()
         has_more = len(rows) > page_size
         rows = rows[:page_size]
@@ -378,7 +378,7 @@ class JobStore:
                 except (TypeError, json.JSONDecodeError):
                     pass
             items.append(d)
-        next_cursor = str(rows[-1]["job_id"]) if has_more and rows else None
+        next_cursor = str(offset + page_size) if has_more else None
         return {
             "items": items,
             "next_cursor": next_cursor,
