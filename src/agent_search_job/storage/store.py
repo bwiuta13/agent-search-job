@@ -476,10 +476,20 @@ class JobStore:
             "SELECT work_mode v, COUNT(*) c FROM jobs WHERE is_active=1 GROUP BY work_mode"
         ):
             out["work_modes"].append({"value": row["v"], "count": row["c"]})
+        # Dropdown nguồn: LUÔN hiện đủ 7 nguồn chuẩn (kể cả 0 job active) -
+        # tránh option "biến mất" âm thầm khi nguồn đó chưa quét/quét lỗi,
+        # người dùng vẫn thấy nguồn tồn tại để chọn rescan.
+        src_counts: dict[str, int] = {}
         for row in self.conn.execute(
-            "SELECT source v, COUNT(*) c FROM jobs WHERE is_active=1 GROUP BY source ORDER BY c DESC"
+            "SELECT source v, COUNT(*) c FROM jobs WHERE is_active=1 GROUP BY source"
         ):
-            out["sources"].append({"value": row["v"], "count": row["c"]})
+            src_counts[row["v"]] = row["c"]
+        for src in ("vietnamworks", "linkedin", "itviec", "careerviet", "topcv", "topdev", "vng"):
+            out["sources"].append({"value": src, "count": src_counts.get(src, 0)})
+        # nguồn lạ ngoài danh sách chuẩn (nếu có) vẫn hiện
+        for src, c in src_counts.items():
+            if src not in ("vietnamworks", "linkedin", "itviec", "careerviet", "topcv", "topdev", "vng"):
+                out["sources"].append({"value": src, "count": c})
         # job_level là chuỗi comma ("junior,middle") -> TÁCH thành từng cấp chuẩn,
         # đếm job match mỗi cấp (dropdown chỉ hiện 7 option cố định, không hiện giá trị gộp)
         level_counts: dict[str, int] = {}

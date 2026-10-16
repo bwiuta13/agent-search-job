@@ -1518,3 +1518,17 @@ class TestMultiLevel:
         assert store.search_jobs(job_levels=["junior"])["total_estimate"] == 1
         assert store.search_jobs(job_levels=["middle"])["total_estimate"] == 1
         assert store.search_jobs(job_levels=["senior"])["total_estimate"] == 0
+
+
+def test_source_facets_always_all_sources():
+    # Dropdown nguồn không bao giờ "mất" option - luôn đủ nguồn chuẩn kể cả 0 job
+    store = JobStore(":memory:")
+    f = store.get_facets()
+    vals = [x["value"] for x in f["sources"]]
+    for src in ("vietnamworks", "linkedin", "itviec", "careerviet", "topcv", "topdev", "vng"):
+        assert src in vals
+    store.insert_job(normalize_job(make_job(source="topcv")))
+    f2 = store.get_facets()
+    by = {x["value"]: x["count"] for x in f2["sources"]}
+    assert by["topcv"] == 1
+    assert by["itviec"] == 0
