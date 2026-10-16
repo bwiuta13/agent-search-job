@@ -51,6 +51,7 @@ python scripts/show_token.py data/jobs.db
 ```
 
 Mời người dùng: set env `ALLOWLIST_EMAILS="a@gmail.com,b@gmail.com"` trước lần chạy đầu (mặc định `friend@example.com`).
+Mở public (không cần đăng nhập, cả web/API/MCP): để `ALLOWLIST_EMAILS=` rỗng trong `.env` (server tự nạp `.env`; biến set trong shell được ưu tiên) hoặc chạy `ALLOWLIST_EMAILS= make start`. Khách xem/tìm được mọi thứ nhưng không lưu việc được; không set biến thì vẫn invite-only.
 
 ## Website
 

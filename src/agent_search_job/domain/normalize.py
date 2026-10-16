@@ -229,49 +229,93 @@ def detect_portfolio_required(text: str) -> Optional[bool]:
 
 
 # Cấp bậc theo text nguồn (vi) - hard-code mapping từng nguồn
+# Lưu ý THỨ TỰ: từ khóa cấp cao/specific đứng TRƯỚC, từ khóa role chung
+# (executive/officer/nhân viên...) đứng CUỐI để "Senior Executive" vẫn ra senior,
+# "Content Lead" vẫn ra lead.
+# keyword role-generic: chỉ dùng khi KHÔNG có keyword cấp cao nào trong title
+# ("Senior Executive" -> senior, không thêm junior từ 'executive')
+_GENERIC_ROLE_KEYWORDS: list[tuple[str, str]] = [
+    ("executive", "junior"), ("officer", "junior"), ("collaborator", "junior"),
+    ("nhân viên", "junior"), ("creator", "junior"), ("writer", "junior"),
+    ("editor", "junior"), ("biên tập", "junior"), ("biên kịch", "junior"),
+    ("copywriter", "junior"), ("thực thi", "junior"),
+    ("specialist", "middle"), ("chuyên viên", "middle"),
+    ("strategist", "middle"), ("planner", "middle"),
+]
+
 _LEVEL_KEYWORDS: list[tuple[str, str]] = [
+    # intern
     ("thực tập sinh", "intern"), ("intern", "intern"), ("thực tập", "intern"),
-    ("fresher", "fresher"), ("chưa có kinh nghiệm", "fresher"),
-    ("không yêu cầu kinh nghiệm", "fresher"), ("junior", "junior"),
-    ("senior", "senior"), ("middle", "middle"),
+    # senior/lead/manager - cụ thể trước
+    ("senior", "senior"),
     ("trưởng nhóm", "lead"), ("team lead", "lead"), ("leader", "lead"),
-    ("supervisor", "lead"), ("giám sát", "lead"),
+    ("supervisor", "lead"), ("giám sát", "lead"), ("lead", "lead"),
     ("trưởng phòng", "manager"), ("giám đốc", "manager"),
     ("manager", "manager"), ("head of", "manager"), ("director", "manager"),
+    ("quản lý", "manager"), ("quản trị", "manager"),
+    # middle
+    ("middle", "middle"), ("specialist", "middle"), ("chuyên viên", "middle"),
+    ("strategist", "middle"), ("planner", "middle"),
+    # junior/fresher cụ thể
+    ("junior", "junior"), ("fresher", "fresher"),
+    ("chưa có kinh nghiệm", "fresher"), ("không yêu cầu kinh nghiệm", "fresher"),
 ]
+
+
+def classify_job_levels(title: str, extra_text: str = "",
+                        exp_min: Optional[float] = None,
+                        exp_max: Optional[float] = None) -> list[str]:
+    """Cấp bậc NHIỀU giá trị: 1 job có thể match nhiều cấp (search cả 2 loại).
+
+    Nguồn tín hiệu (union kết quả):
+    1. keyword trong title ("Social & Content Lead" -> lead)
+    2. số năm KN từ JD (2 năm -> middle)
+    -> "Content Executive" 2 năm = [junior, middle] - search level nào cũng ra.
+
+    Thứ tự trả về: cao -> thấp (phần tử đầu là cấp chính để hiển thị).
+    """
+    levels: list[str] = []
+    t = (title or "").lower()
+    for kw, level in _LEVEL_KEYWORDS:
+        if kw in t and level not in levels:
+            levels.append(level)
+    if not levels:
+        # role-generic (executive/specialist/collaborator...) chỉ khi không có
+        # keyword cấp nào trong title - "Senior Executive" vẫn chỉ là senior
+        for kw, level in _GENERIC_ROLE_KEYWORDS:
+            if kw in t and level not in levels:
+                levels.append(level)
+    if not levels:
+        x = (extra_text or "").lower()[:800]
+        for kw, level in _LEVEL_KEYWORDS:
+            if kw in x and level not in levels:
+                levels.append(level)
+    # tín hiệu từ số năm KN (luôn xét thêm - thêm level nếu chưa có)
+    if exp_min is not None or exp_max is not None:
+        mid = ((exp_min + exp_max) / 2 if (exp_min is not None and exp_max is not None)
+               else (exp_min if exp_min is not None else exp_max))
+        # mid=0 (JD parse "0 năm" mơ hồ) không thêm fresher cho job senior/manager
+        if mid is not None and mid > 0:
+            if mid < 1:
+                exp_level = "fresher"
+            elif mid < 2:
+                exp_level = "junior"
+            elif mid < 4:
+                exp_level = "middle"
+            else:
+                exp_level = "senior"
+            if exp_level not in levels:
+                levels.append(exp_level)
+    # giữ thứ tự tín hiệu: title match trước (cấp chính để hiển thị),
+    # level từ số năm KN nối sau (search vẫn match cả hai)
+    return levels
 
 
 def classify_job_level(title: str, extra_text: str = "",
                        exp_min: Optional[float] = None,
                        exp_max: Optional[float] = None) -> str:
-    """Cấp bậc: ưu tiên keyword trong title, rồi extra_text, rồi fallback theo số năm KN.
-
-    Mapping theo năm (không có keyword):
-    - None/<1 -> fresher; 1-2 -> junior; 2-4 -> middle; 4-7 -> senior; >=7 -> senior
-    """
-    t = title.lower()
-    for kw, level in _LEVEL_KEYWORDS:
-        if kw in t:
-            return level
-    x = (extra_text or "").lower()[:800]
-    for kw, level in _LEVEL_KEYWORDS:
-        if kw in x:
-            return level
-    if exp_min is None and exp_max is None:
-        return ""
-    if exp_min is not None and exp_max is not None:
-        mid = (exp_min + exp_max) / 2
-    else:
-        mid = exp_min if exp_min is not None else exp_max
-    if mid is None:
-        return ""
-    if mid < 1:
-        return "fresher"
-    if mid < 2:      # 1-2 năm
-        return "junior"
-    if mid < 4:      # 2-4 năm
-        return "middle"
-    return "senior"
+    """Cấp bậc chính (phần tử đầu của classify_job_levels) - tương thích ngược."""
+    return (classify_job_levels(title, extra_text, exp_min, exp_max) or [""])[0]
 
 
 def normalize_job(job: NormalizedJob) -> NormalizedJob:
@@ -291,10 +335,10 @@ def normalize_job(job: NormalizedJob) -> NormalizedJob:
     if not job.district:
         job.district = parse_district(job.address or job.city)
     job.work_mode = parse_work_mode(f"{job.description} {job.requirements}", job.title)
-    job.job_level = classify_job_level(
+    job.job_level = ",".join(classify_job_levels(
         job.title, f"{job.requirements} {job.description}",
         job.experience_years_min, job.experience_years_max,
-    )
+    ))
     cluster, conf = classify_role(job.title, job.description)
     job.role_cluster, job.role_cluster_confidence = cluster, conf
     blob = f"{job.title} {job.description} {job.requirements}"

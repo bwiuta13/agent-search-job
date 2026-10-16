@@ -1,7 +1,9 @@
 """VNG Careers adapter - career.vng.com.vn (verify cấu trúc thật 16/10/2026).
 
 Trang Next.js server render: __NEXT_DATA__ -> props.pageProps.jobs (10 jobs/trang,
-total 78). Mỗi job có JD đầy đủ (1700+ chars) ngay trong list - không cần fetch detail.
+total 78). "description" trong list chỉ là excerpt text phẳng (mất <li>/<br>) -> job HCM
+fetch thêm trang /tim-kiem-viec-lam/chi-tiet/{slug}: job_data.description + requirement
+là HTML đầy đủ (verify 16/10/2026).
 - Job HCM: location == "Thành phố Hồ Chí Minh"
 - job_family: Marketing/Creative... -> dùng làm hint phân loại
 - Lọc phía ingest: chỉ giữ job thuộc Truyền thông đa phương tiện (scope filter chung).
@@ -19,6 +21,7 @@ import httpx
 
 from ..domain.models import NormalizedJob, SourceName, utcnow
 from .base import DiscoverInput, JobSourceAdapter, SourceHealth
+from .detail_fetchers import _strip
 
 BASE = "https://career.vng.com.vn/vi/tim-kiem-viec-lam"
 LIST_URL = "https://career.vng.com.vn/co-hoi-nghe-nghiep"  # fallback (không phân trang)
@@ -29,14 +32,6 @@ UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
 )
-
-
-def _strip_html(text: str) -> str:
-    text = re.sub(r"<br\s*/?>", "\n", text or "", flags=re.I)
-    text = re.sub(r"</(p|li|div|h\d|ul|ol)>", "\n", text, flags=re.I)
-    text = re.sub(r"<[^>]+>", " ", text)
-    return re.sub(r"[ \t]+", " ", text.replace("&nbsp;", " ")
-                  .replace("&amp;", "&")).strip()
 
 
 async def _fetch_page(client: httpx.AsyncClient, page: int) -> tuple[list[dict], int]:
@@ -65,6 +60,9 @@ class VNGCareersAdapter(JobSourceAdapter):
     def __init__(self, timeout: float = 20.0, max_pages: int = 8):
         self.timeout = timeout
         self.max_pages = max_pages
+        # slug -> job_data trang chi tiết; ingest gọi discover 1 lần/query mà VNG bỏ qua
+        # query -> cache để mỗi job chỉ fetch detail 1 lần/lượt quét
+        self._details: dict[str, dict] = {}
 
     async def discover(self, input: DiscoverInput) -> AsyncIterator[NormalizedJob]:
         async with httpx.AsyncClient(
@@ -89,6 +87,30 @@ class VNGCareersAdapter(JobSourceAdapter):
                     if emitted >= input.max_results:
                         return
                     j = self._to_job(raw)
+                    slug = str(raw.get("slug") or "")
+                    if j and j.is_hcm and slug:
+                        # list chỉ có excerpt text phẳng (mất <li>/<br>) -> lấy HTML
+                        # description + requirement ở trang chi tiết (job_data)
+                        if slug not in self._details:
+                            jd: dict = {}
+                            try:
+                                resp = await client.get(f"{DETAIL_LIST}/{slug}")
+                                m = re.search(
+                                    r'<script id="__NEXT_DATA__" type="application/json">'
+                                    r'(.*?)</script>', resp.text, re.S,
+                                ) if resp.status_code == 200 else None
+                                if m:
+                                    jd = json.loads(m.group(1))["props"]["pageProps"].get(
+                                        "job_data") or {}
+                            except (httpx.HTTPError, ValueError, KeyError,
+                                    TypeError, AttributeError):
+                                jd = {}
+                            self._details[slug] = jd if isinstance(jd, dict) else {}
+                        jd = self._details[slug]
+                        full = _strip(str(jd.get("description") or ""))
+                        if full:
+                            j.description = full[:4000]
+                            j.requirements = _strip(str(jd.get("requirement") or ""))[:2000]
                     if j:
                         emitted += 1
                         new_in_page += 1
@@ -103,7 +125,7 @@ class VNGCareersAdapter(JobSourceAdapter):
         if not title:
             return None
         loc = str(raw.get("location") or "")
-        desc = _strip_html(str(raw.get("description") or ""))[:4000]
+        desc = _strip(str(raw.get("description") or ""))[:4000]
         slug = str(raw.get("slug") or "")
         detail_url = f"{DETAIL_LIST}/{slug}" if slug else LIST_URL
         return NormalizedJob(

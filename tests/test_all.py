@@ -185,6 +185,15 @@ class TestStore:
         store.update_job(existing, j2)  # không insert mới
         assert store.stats()["total_jobs"] == 1
 
+    def test_update_keeps_jd_when_new_crawl_has_none(self):
+        store = JobStore(":memory:")
+        jid = store.insert_job(normalize_job(make_job(description="JD đầy đủ", requirements="Yêu cầu")))
+        store.update_job(jid, normalize_job(make_job(description="", requirements="")))
+        job = store.get_job(jid)
+        assert (job["description"], job["requirements"]) == ("JD đầy đủ", "Yêu cầu")
+        store.update_job(jid, normalize_job(make_job(description="JD mới")))
+        assert store.get_job(jid)["description"] == "JD mới"
+
     def test_expired_marked_inactive(self):
         store = JobStore(":memory:")
         j = make_job(deadline=datetime.now(timezone.utc) - timedelta(days=1))
@@ -486,6 +495,36 @@ class TestWebAPI:
         r = client.get("/api/jobs")
         assert r.status_code == 401
 
+    def test_public_mode_when_allowlist_empty(self, monkeypatch):
+        from fastapi.testclient import TestClient
+        import agent_search_job.web.app as appmod
+        monkeypatch.setenv("JOBS_DB", ":memory:")
+        monkeypatch.setenv("ALLOWLIST_EMAILS", "")
+        appmod._store = None
+        client = TestClient(appmod.app)
+        job_id = appmod.get_store().insert_job(normalize_job(make_job()))
+        # không đăng nhập vẫn vào được web + API, header hiện "Khách"
+        r = client.get("/", follow_redirects=False)
+        assert r.status_code == 302 and r.headers["location"] == "/search"
+        r = client.get("/search?q=content")
+        assert r.status_code == 200 and "Khách" in r.text and 'href="/saved"' not in r.text
+        assert client.get(f"/jobs/{job_id}").status_code == 200
+        assert client.get("/api/jobs").status_code == 200
+        # cookie hỏng cũng là khách, không 401
+        client.cookies.set("vnjobs_session", "sai")
+        assert client.get("/search").status_code == 200
+        # khách không lưu việc được (không có user_id)
+        r = client.post("/api/me/saved-jobs", json={"job_id": job_id})
+        assert r.status_code == 401
+        # MCP không cần bearer token
+        r = client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+        assert r.status_code == 200 and r.json()["result"]["tools"]
+        # có email trong allowlist -> invite-only như cũ
+        monkeypatch.setenv("ALLOWLIST_EMAILS", "a@example.com")
+        client.cookies.clear()
+        assert client.get("/search").status_code == 401
+        appmod._store = None
+
     def test_noindex_header(self):
         client = self._client()
         r = client.get("/search?q=content")
@@ -783,6 +822,98 @@ class TestJDAnalysis:
                                  "requirements": "", "company_name": "c"}) is None
 
 
+def _mock_httpx(monkeypatch, handler):
+    """Mọi httpx.AsyncClient tạo trong code đi qua MockTransport(handler)."""
+    import httpx
+    real = httpx.AsyncClient
+
+    def factory(*a, **k):
+        k["transport"] = httpx.MockTransport(handler)
+        return real(*a, **k)
+    monkeypatch.setattr(httpx, "AsyncClient", factory)
+
+
+class TestVietnamWorksLinkedInJD:
+    async def test_vietnamworks_full_jd_from_detail_page(self, monkeypatch):
+        import httpx
+        from agent_search_job.sources.base import DiscoverInput
+        from agent_search_job.sources.vietnamworks import API_URL, VietnamWorksAdapter
+        full = "<p>- Viết bài PR</p><p>- Dựng video ngắn</p><p>- Báo cáo KPI hằng tuần</p>"
+        payload = json.dumps({"job": {"jobDescription": full,
+                                      "jobRequirement": "<p>2 năm kinh nghiệm</p>"}},
+                             separators=(",", ":"))
+        page = ("<script>self.__next_f.push([1," + json.dumps(payload[:20]) + "])</script>"
+                "<script>self.__next_f.push([1," + json.dumps(payload[20:]) + "])</script>")
+        sent = []
+
+        def handler(req: httpx.Request):
+            if str(req.url) == API_URL:
+                sent.append(json.loads(req.content))
+                base = {"jobTitle": "Content Writer", "companyName": "ABC",
+                        "jobDescription": "<p>- Viết bài PR</p>...", "jobRequirement": ""}
+                return httpx.Response(200, json={"data": [
+                    {**base, "jobId": 11, "jobUrl": "https://www.vietnamworks.com/a-11-jv"},
+                    {**base, "jobId": 12, "jobUrl": "https://www.vietnamworks.com/b-12-jv"},
+                ]})
+            if req.url.path == "/a-11-jv":
+                return httpx.Response(200, text=page)
+            return httpx.Response(500)
+        _mock_httpx(monkeypatch, handler)
+
+        jobs = [j async for j in VietnamWorksAdapter().discover(DiscoverInput(query="content"))]
+        assert "jobId" in sent[0]["retrieveFields"]
+        assert jobs[0].source_url == "https://www.vietnamworks.com/a-11-jv"
+        assert jobs[0].source_job_id == "11"
+        assert jobs[0].description == "- Viết bài PR\n- Dựng video ngắn\n- Báo cáo KPI hằng tuần"
+        assert jobs[0].requirements == "2 năm kinh nghiệm"
+        # trang detail lỗi -> giữ JD cắt từ search, không văng lỗi
+        assert jobs[1].description.startswith("- Viết bài PR")
+
+    async def test_vietnamworks_jd_as_rsc_text_reference(self, monkeypatch):
+        """JD dài: field là "$27", nội dung nằm ở dòng "27:T<số byte hex>,<html>"."""
+        import httpx
+        from agent_search_job.sources.detail_fetchers import fetch_detail
+        jd = "<p><strong>1. Sản xuất nội dung</strong></p><p>• Lên ý tưởng</p>"
+        req = "<p>Kỹ năng viết tốt</p>"
+        flat = ('1:{"job":{"jobDescription":"$27","jobRequirement":"$28"}}\n'
+                f"<p>x</p>27:T{len(jd.encode()):x},{jd}28:T{len(req.encode()):x},{req}"
+                '29:{"other":1}')
+        page = "".join("<script>self.__next_f.push([1," + json.dumps(flat[i:i + 30]) + "])</script>"
+                       for i in range(0, len(flat), 30))
+        _mock_httpx(monkeypatch, lambda r: httpx.Response(200, text=page))
+        d = await fetch_detail("vietnamworks", "https://www.vietnamworks.com/a-1-jv")
+        assert d.description == "1. Sản xuất nội dung\n• Lên ý tưởng"
+        assert d.requirements == "Kỹ năng viết tốt"
+
+    async def test_linkedin_detail_retries_429(self, monkeypatch):
+        import asyncio
+        import httpx
+        from agent_search_job.sources.detail_fetchers import fetch_detail
+        calls = []
+
+        async def no_sleep(*a): return None
+        monkeypatch.setattr(asyncio, "sleep", no_sleep)
+
+        def handler(req: httpx.Request):
+            calls.append(req.url.path)
+            if req.url.path == "/jobs/view/1" and len(calls) == 1:
+                return httpx.Response(429)
+            if req.url.path == "/jobs/view/1":
+                return httpx.Response(200, text=(
+                    '<section class="show-more-less-html"><div class="show-more-less-html__markup x">'
+                    "<p>Company Description</p><ul><li>Viết content</li><li>Chạy ads</li></ul>"
+                    "</div><button></button></section>"))
+            return httpx.Response(302, headers={"location": "https://www.linkedin.com/authwall"}) \
+                if req.url.path != "/authwall" else httpx.Response(200, text="login")
+        _mock_httpx(monkeypatch, handler)
+
+        d = await fetch_detail("linkedin", "https://www.linkedin.com/jobs/view/1")
+        assert d.description == "Company Description\nViết content\nChạy ads"
+        assert calls == ["/jobs/view/1", "/jobs/view/1"]
+        # bị đẩy sang authwall -> None
+        assert await fetch_detail("linkedin", "https://www.linkedin.com/jobs/view/2") is None
+
+
 class TestTopCVDetail:
     async def test_jd_taken_from_h2_block_not_blog_menu(self, monkeypatch):
         """Menu TopCV có bài blog title="...mô tả công việc..." trước JD thật."""
@@ -834,6 +965,51 @@ class TestTopCVDetail:
         d = await fetch_detail("topcv", "https://www.topcv.vn/viec-lam/x/2.html")
         assert (d.description, d.requirements, d.benefits) == (
             "Plan social content", "2 years", ["13th salary"])
+
+
+class TestTopDevDetail:
+    async def test_jd_from_prose_blocks_keeps_lines(self, monkeypatch):
+        """JSON "description" của TopDev đã mất <li> -> lấy khối prose-ul render sẵn."""
+        import agent_search_job.sources.topdev as td
+        from agent_search_job.sources.detail_fetchers import fetch_detail
+        flat_json = ('<script>{"description":"<br>Your role & responsibilities<br>'
+                     '1. Quản lý teamQuản lý CTV LivestreamLên lịch ca' + "x" * 80
+                     + '"}</script>')
+        pages = {"html": flat_json + (
+            '<span class="flex font-semibold"><div class="inline-flex">1</div>'
+            'Vai trò &amp; trách nhiệm của bạn</span><div class="mt-2">'
+            '<div class="prose-ul text-sm"><p><strong>1. Quản l&yacute; team</strong></p>\n'
+            '<ul>\n<li style="a"><span>Quản lý CTV\n Livestream</span></li>\n'
+            '<li>Lên lịch&nbsp;ca</li>\n</ul></div></div>'
+            '<span class="mt-4 flex font-semibold"><div>2</div>Kỹ năng &amp; trình độ của bạn'
+            '</span><div class="mt-2"><div class="prose-ul"><ul><li>6 tháng kinh nghiệm</li>'
+            '<li>Biết Shopee</li></ul></div></div>'
+            '<span class="mt-4 font-semibold"><div>3</div>Quyền lợi</span>'
+            '<div class="mb-5 mt-2"><div class="prose-ul"><ul><li>Lương 15-20 triệu</li>'
+            '<li>ESOP</li></ul></div></div></div></div>')}
+
+        class Resp:
+            status_code = 200
+            @property
+            def text(self): return pages["html"]
+
+        class Client:
+            def __init__(self, *a, **k): pass
+            async def __aenter__(self): return self
+            async def __aexit__(self, *a): return False
+            async def get(self, *a, **k): return Resp()
+        monkeypatch.setattr(td.httpx, "AsyncClient", Client)
+
+        d = await fetch_detail("topdev", "https://topdev.vn/viec-lam/x-1")
+        assert d.description == "1. Quản lý team\nQuản lý CTV Livestream\nLên lịch ca"
+        assert d.requirements == "6 tháng kinh nghiệm\nBiết Shopee"
+        assert d.benefits == ["Lương 15-20 triệu", "ESOP"]
+
+        # không có khối prose-ul -> fallback JSON, ít nhất giữ <br> thành xuống dòng
+        pages["html"] = flat_json
+        d = await fetch_detail("topdev", "https://topdev.vn/viec-lam/x-1")
+        assert d.description.startswith(
+            "Your role & responsibilities\n1. Quản lý teamQuản lý CTV")
 
 
 # ---------------------------------------------------------------------------
@@ -1028,6 +1204,57 @@ class TestVNGCareers:
         finally:
             vc.httpx.AsyncClient = orig
 
+    def test_vng_takes_html_jd_from_detail_page(self, monkeypatch):
+        """List chỉ có excerpt text phẳng -> JD/yêu cầu lấy từ job_data trang chi tiết."""
+        import asyncio
+        import agent_search_job.sources.vng_careers as vc
+        from agent_search_job.pipeline.ingest import DiscoverInput
+
+        def next_data(page_props: dict) -> str:
+            return ('<script id="__NEXT_DATA__" type="application/json">'
+                    + json.dumps({"props": {"pageProps": page_props}}) + "</script>")
+        listing = next_data({"jobs": [
+            {"job_id": "6922", "title": "Creative Executive", "slug": "6922-creative",
+             "location": "Thành phố Hồ Chí Minh",
+             "description": " About Role:   Quay dựng video Viết kịch bản"},
+            {"job_id": "1", "title": "Admin", "slug": "1-admin", "location": "Sydney",
+             "description": "y"},
+        ], "total": 2})
+        detail = next_data({"job_data": {
+            "description": ('<span>About\nRole:</span><br><ul><li>Quay &amp; dựng\n video</li>'
+                            '\n<li>Viết kịch bản</li></ul>'),
+            "requirement": "\ufeff<div>2 năm kinh nghiệm</div><div>Biết Premiere</div>",
+        }})
+        detail_urls: list[str] = []
+
+        class Resp:
+            status_code = 200
+            def __init__(self, text): self.text = text
+
+        class Client:
+            def __init__(self, *a, **k): pass
+            async def __aenter__(self): return self
+            async def __aexit__(self, *a): return False
+            async def get(self, url, **k):
+                if "/chi-tiet/" in url:
+                    detail_urls.append(url)
+                    return Resp(detail)
+                return Resp(listing)
+        monkeypatch.setattr(vc.httpx, "AsyncClient", Client)
+
+        ad = vc.VNGCareersAdapter()
+
+        async def run():
+            return [j async for j in ad.discover(DiscoverInput(query="q", max_results=10))]
+        jobs = asyncio.run(run())
+        hcm = next(j for j in jobs if j.is_hcm)
+        assert hcm.description == "About Role:\nQuay & dựng video\nViết kịch bản"
+        assert hcm.requirements == "2 năm kinh nghiệm\nBiết Premiere"
+        # job ngoài HCM không fetch detail; ingest gọi discover mỗi query -> cache
+        asyncio.run(run())
+        assert detail_urls == [
+            "https://career.vng.com.vn/tim-kiem-viec-lam/chi-tiet/6922-creative"]
+
     def test_scope_boundary_no_false_positive(self):
         from agent_search_job.pipeline.ingest import in_multimedia_scope
         # 'pr' trong 'Representative' không được tính là PR
@@ -1105,3 +1332,44 @@ class TestHCMHardRequirement:
             "DevOps Engineer", "xây dựng và vận hành các giải pháp AI")
         assert in_multimedia_scope("Video Editor", "dựng video tiktok")
         assert in_multimedia_scope("Nhân viên dựng phim", "montage")
+
+
+# ---------------------------------------------------------------------------
+# Multi-level classification ("search thành cả 2 loại")
+# ---------------------------------------------------------------------------
+
+class TestMultiLevel:
+    def test_executive_is_junior_vn(self):
+        from agent_search_job.domain.normalize import classify_job_levels
+        # Executive tại VN = nhân viên (junior), không phải quản lý
+        assert classify_job_levels("Social Media Executive") == ["junior"]
+        assert classify_job_levels("Content Marketing Collaborator, VNGGames") == ["junior"]
+        assert classify_job_levels("Nhân Viên Sáng Tạo Nội Dung") == ["junior"]
+
+    def test_senior_executive_not_junior(self):
+        from agent_search_job.domain.normalize import classify_job_levels
+        # keyword senior thắng executive -> chỉ [senior]
+        assert classify_job_levels("Senior Content Marketing Executive") == ["senior"]
+
+    def test_multi_level_union_with_experience(self):
+        from agent_search_job.domain.normalize import classify_job_levels
+        # title Executive + JD 2-3 năm -> match CẢ junior lẫn middle
+        assert classify_job_levels("Content Executive", "", 2, 3) == ["junior", "middle"]
+        assert classify_job_levels("Content Executive", "", 4, 5) == ["junior", "senior"]
+        # title Lead + 5 năm -> [lead, senior]
+        assert classify_job_levels("Social & Content Lead", "", 5, None) == ["lead", "senior"]
+
+    def test_zero_year_exp_not_fresher_signal(self):
+        from agent_search_job.domain.normalize import classify_job_levels
+        # JD parse "0 năm" mơ hồ không hạ cấp job senior
+        assert classify_job_levels("Senior Content Marketing", "", 0, None) == ["senior"]
+
+    def test_search_matches_any_level_in_string(self):
+        store = JobStore(":memory:")
+        j = normalize_job(make_job(title="Content Executive",
+                                    requirements="2-3 năm kinh nghiệm"))
+        store.insert_job(j)
+        # job_level = "junior,middle" -> search level nào cũng ra
+        assert store.search_jobs(job_levels=["junior"])["total_estimate"] == 1
+        assert store.search_jobs(job_levels=["middle"])["total_estimate"] == 1
+        assert store.search_jobs(job_levels=["senior"])["total_estimate"] == 0

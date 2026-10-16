@@ -5,13 +5,18 @@
   experience"; perks trong "Why you'll love working here".
 - CareerViet: JD trong phần "Mô tả công việc" (trang detail /viec-lam/...-vi.html,
   server render, cần gzip).
-- LinkedIn (JobSpy): fetch description qua linkedin_fetch_description=True.
+- LinkedIn: trang public /jobs/view/{id} (không cần login) có JD trong
+  .show-more-less-html__markup. JobSpy fetch_description hay dính 429 rồi trả JD
+  rỗng không báo lỗi -> tự fetch, giãn cách + retry khi 429.
 - TopCV: cần Playwright (Cloudflare) - job detail /viec-lam/{slug}/{id}.html,
   JD trong .job-detail-info; dùng khi caller bật browser.
-- VietnamWorks: internal API đã trả JD đầy đủ ngay trong search (không cần fetch).
+- VietnamWorks: search API chỉ trả JD đã cắt ~300 ký tự + "..."; trang detail
+  (Next.js) có JD đầy đủ trong payload self.__next_f.push(...) (server render).
 """
 from __future__ import annotations
 
+import asyncio
+import json
 import re
 from dataclasses import dataclass, field
 from html import unescape
@@ -38,6 +43,9 @@ class JobDetail:
 
 
 def _strip(html: str) -> str:
+    # xuống dòng thô trong HTML chỉ là khoảng trắng (JD dán từ Word hay ngắt giữa câu);
+    # dòng thật đến từ <br> / thẻ đóng khối bên dưới
+    html = re.sub(r"\s+", " ", html.replace("\ufeff", ""))
     html = re.sub(r"<br\s*/?>", "\n", html, flags=re.I)
     html = re.sub(r"</(p|li|div|h\d)>", "\n", html, flags=re.I)
     html = re.sub(r"<[^>]+>", " ", html)
@@ -113,6 +121,59 @@ class CareerVietDetailFetcher:
         m = re.search(r"(?i)(\d+[\d.,]*\s*(?:triệu|tri)\s*(?:[-–]\s*\d+[\d.,]*\s*(?:triệu|tri))?)", h)
         if m:
             d.salary_text = m.group(1)
+        return d if d.description else None
+
+
+class VietnamWorksDetailFetcher:
+    """JD VietnamWorks đầy đủ từ payload RSC của trang detail ...-{jobId}-jv."""
+
+    async def fetch(self, url: str, client: httpx.AsyncClient) -> Optional[JobDetail]:
+        resp = await client.get(url)
+        if resp.status_code != 200:
+            return None
+        try:
+            flat = "".join(json.loads(c) for c in re.findall(
+                r'self\.__next_f\.push\(\[1,(".*?")\]\)</script>', resp.text, re.S))
+        except json.JSONDecodeError:
+            return None
+        found = {}
+        for key in ("jobDescription", "jobRequirement"):
+            i = flat.find(f'"{key}":"')
+            if i < 0:
+                continue
+            try:
+                value, _ = json.JSONDecoder().raw_decode(flat, i + len(key) + 3)
+            except json.JSONDecodeError:
+                continue
+            # JD dài được tách thành dòng text riêng "<id>:T<số byte hex>,<html>"
+            # và field chỉ giữ tham chiếu "$<id>"
+            ref = re.fullmatch(r"\$([0-9a-f]+)", value) if isinstance(value, str) else None
+            if ref:
+                row = re.search(rf"(?<![0-9a-zA-Z]){ref.group(1)}:T([0-9a-f]+),", flat)
+                value = (flat[row.end():].encode()[:int(row.group(1), 16)]
+                         .decode("utf-8", "ignore") if row else "")
+            found[key] = _strip(value) if isinstance(value, str) else ""
+        d = JobDetail(description=found.get("jobDescription", ""),
+                      requirements=found.get("jobRequirement", ""))
+        return d if d.description else None
+
+
+class LinkedInDetailFetcher:
+    """JD LinkedIn từ trang public /jobs/view/{id}; 429 -> chờ rồi thử lại (tối đa 3 lần)."""
+
+    async def fetch(self, url: str, client: httpx.AsyncClient) -> Optional[JobDetail]:
+        for attempt in range(3):
+            resp = await client.get(url)
+            if resp.status_code != 429:
+                break
+            await asyncio.sleep(10 * (attempt + 1))
+        # bị đẩy sang authwall/login thì không còn là trang job
+        if resp.status_code != 200 or "/jobs/view/" not in str(resp.url):
+            return None
+        m = re.search(r'show-more-less-html__markup[^>]*>(.*?)</section>', resp.text, re.S)
+        if not m:
+            return None
+        d = JobDetail(description=_strip(m.group(1))[:6000])
         return d if d.description else None
 
 
@@ -195,6 +256,14 @@ async def fetch_detail(source: str, url: str,
             return await CareerVietDetailFetcher().fetch(url, client)
     if source == "topcv":
         return await TopCVDetailFetcher().fetch(url)
+    if source in ("vietnamworks", "linkedin"):
+        fetcher = (VietnamWorksDetailFetcher() if source == "vietnamworks"
+                   else LinkedInDetailFetcher())
+        async with httpx.AsyncClient(
+            timeout=timeout, follow_redirects=True,
+            headers={"User-Agent": UA, "Accept-Language": "vi,en;q=0.8"},
+        ) as client:
+            return await fetcher.fetch(url, client)
     if source == "topdev":
         from .topdev import fetch_topdev_detail
         d = await fetch_topdev_detail(url, timeout=timeout)
@@ -203,5 +272,4 @@ async def fetch_detail(source: str, url: str,
         return JobDetail(description=d.get("description", ""),
                          requirements=d.get("requirements", ""),
                          benefits=d.get("benefits", []))
-    # vietnamworks: JD có sẵn từ search API; linkedin: dùng JobSpy
     return None

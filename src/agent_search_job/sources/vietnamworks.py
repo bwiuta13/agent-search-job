@@ -4,9 +4,13 @@ POST ms.vietnamworks.com/job-search/v1.0/search
 - Không cần auth; header Origin/Referer bắt buộc.
 - HCM = cityId 29 (docs/research-job-data-sources.md mục 3).
 - Dữ liệu giàu: salary min/max, benefits, skills, companyProfile, workingLocations.
+- retrieveFields phải có "jobId": thiếu thì API trả jobId=0 và jobUrl rỗng.
+- jobDescription/jobRequirement trong search bị cắt ~300 ký tự -> discover lấy
+  JD đầy đủ từ trang detail (VietnamWorksDetailFetcher), lỗi thì giữ bản cắt.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from typing import AsyncIterator, Optional
@@ -15,6 +19,7 @@ import httpx
 
 from ..domain.models import Company, NormalizedJob, utcnow, SourceName
 from .base import DiscoverInput, JobSourceAdapter, SourceHealth
+from .detail_fetchers import UA, VietnamWorksDetailFetcher
 
 API_URL = "https://ms.vietnamworks.com/job-search/v1.0/search"
 HCM_CITY_ID = "29"
@@ -30,7 +35,7 @@ HEADERS = {
 }
 
 RETRIEVE_FIELDS = [
-    "jobTitle", "jobUrl", "companyName", "companyProfile", "companySize",
+    "jobId", "jobTitle", "jobUrl", "companyName", "companyProfile", "companySize",
     "salary", "salaryMin", "salaryMax", "prettySalary", "isSalaryVisible",
     "jobDescription", "jobRequirement", "benefits", "skills",
     "workingLocations", "address", "industries", "industriesV3",
@@ -77,8 +82,27 @@ class VietnamWorksAdapter(JobSourceAdapter):
             resp = await client.post(API_URL, json=payload)
             resp.raise_for_status()
             data = resp.json()
-        for raw in data.get("data", []):
-            yield self._to_job(raw)
+        jobs = [self._to_job(raw) for raw in data.get("data", [])]
+        # JD trong search bị cắt -> lấy bản đầy đủ từ trang detail (5 request song song)
+        sem = asyncio.Semaphore(5)
+        fetcher = VietnamWorksDetailFetcher()
+        async with httpx.AsyncClient(
+            timeout=self.timeout, follow_redirects=True, headers={"User-Agent": UA},
+        ) as client:
+            async def fill(job: NormalizedJob):
+                if not job.source_url:
+                    return
+                async with sem:
+                    try:
+                        d = await fetcher.fetch(job.source_url, client)
+                    except Exception:  # noqa: BLE001 - lỗi trang detail -> giữ JD cắt
+                        return
+                if d:
+                    job.description = d.description[:4000]
+                    job.requirements = (d.requirements or job.requirements)[:2000]
+            await asyncio.gather(*(fill(j) for j in jobs))
+        for job in jobs:
+            yield job
 
     def _to_job(self, raw: dict) -> NormalizedJob:
         locs = raw.get("workingLocations") or []

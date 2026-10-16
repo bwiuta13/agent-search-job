@@ -156,7 +156,7 @@ async def fetch_topdev_detail(url: str, timeout: float = 20.0):
     requirements = ""
     benefits: list[str] = []
     for m in re.finditer(
-        r'([^<>]+)</span><div class="mt-2"><div class="prose-ul[^"]*">(.*?)'
+        r'([^<>]+)</span><div class="[^"]*\bmt-2"><div class="prose-ul[^"]*">(.*?)'
         r'</div></div>(?=<span|</div>)', h, re.S,
     ):
         heading = html_lib.unescape(m.group(1)).strip()

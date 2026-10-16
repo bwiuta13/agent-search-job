@@ -230,6 +230,9 @@ class JobStore:
     def update_job(self, job_id: int, job: NormalizedJob, keep_inactive: bool = False):
         """Update các field mutable; giữ first_seen_at.
 
+        description/requirements rỗng (nguồn lần này không lấy được JD, vd. LinkedIn
+        dính 429, TopCV search không có JD) -> giữ JD đã lưu, không xoá trắng.
+
         keep_inactive: nếu job đang inactive (bị lọc scope/out-of-HCM/hết hạn),
         crawl mới KHÔNG được bật lại is_active - tránh job đã loại quay lại.
         """
@@ -246,8 +249,10 @@ class JobStore:
                    role_cluster_confidence=?, salary_min_vnd=?, salary_max_vnd=?,
                    salary_text=?, experience_years_min=?, experience_years_max=?, job_level=?,
                    work_mode=?, district=?, city=?, is_hcm=?, address=?, platforms=?,
-                   creative_tools=?, portfolio_required=?, deadline=?, description=?,
-                   requirements=?, benefits=?, apply_url=?, languages=?,
+                   creative_tools=?, portfolio_required=?, deadline=?,
+                   description=COALESCE(NULLIF(?, ''), description),
+                   requirements=COALESCE(NULLIF(?, ''), requirements),
+                   benefits=?, apply_url=?, languages=?,
                    is_active=?, source=?, source_url=?, source_job_id=?,
                    last_verified_at=?
                    WHERE job_id=?""",
@@ -354,9 +359,15 @@ class JobStore:
             where.append(f"work_mode IN ({qs})")
             params.extend(work_modes)
         if job_levels:
-            qs = ",".join("?" * len(job_levels))
-            where.append(f"job_level IN ({qs})")
-            params.extend(job_levels)
+            # job_level là chuỗi comma nhiều cấp ("junior,middle") -> match bất kỳ
+            conds = []
+            for lv in job_levels:
+                conds.append(
+                    "(job_level = ? OR job_level LIKE ? ESCAPE '\\' "
+                    "OR job_level LIKE ? ESCAPE '\\')"
+                )
+                params.extend([lv, lv + ",%", "%," + lv])
+            where.append("(" + " OR ".join(conds) + ")")
         if company_query:
             where.append("LOWER(company_name) LIKE ?")
             params.append(f"%{company_query.lower()}%")

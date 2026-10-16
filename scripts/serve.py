@@ -19,6 +19,10 @@ def main():
     args = ap.parse_args()
 
     import os
+    # nạp .env ở gốc project (ALLOWLIST_EMAILS, OPENAI_API_KEY...); biến đã set
+    # trong shell được ưu tiên, vd. `ALLOWLIST_EMAILS= make start` vẫn thắng .env
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).resolve().parent.parent / ".env", override=False)
     os.environ["JOBS_DB"] = args.db
 
     import uvicorn

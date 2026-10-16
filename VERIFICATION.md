@@ -221,3 +221,29 @@ level classify, search level+company, contracts validation)
 - vietnamworks 68, linkedin 53, topdev 28, topcv 21, vng 13
 - 76/76 tests pass (+4: _is_hcm theo nguồn, pipeline out_of_hcm, keep_inactive,
   scope design/dựng false positive)
+
+
+## 12. Multi-level: search 1 job match nhiều cấp bậc (16/10/2026)
+
+### Quy tắc mới theo feedback: "Executive ở VN = junior" + "cho search cả 2 loại"
+- `classify_job_levels` trả DANH SÁCH cấp (không còn 1 giá trị):
+  1. keyword title (senior/lead/manager/intern...) - cụ thể trước
+  2. nếu trống: role-generic map chuẩn VN: executive/officer/collaborator/nhân viên/
+     creator/writer/editor/copywriter -> junior; specialist/chuyên viên/strategist/
+     planner -> middle ("Senior Executive" vẫn chỉ senior - generic không chạy khi
+     có keyword cấp cao)
+  3. UNION thêm level từ số năm KN (mid>0): Executive 2-3 năm -> [junior, middle]
+- `job_level` lưu chuỗi comma "junior,middle"; search `job_levels` match BẤT KỲ
+  cấp trong chuỗi (job 2 cấp ra ở filter cả junior lẫn middle)
+- mid=0 ("0 năm" parse mơ hồ) không thêm fresher vào job senior/manager
+
+### Phân bố cuối (185 active, chỉ 5 trống - giảm từ 66):
+junior 54, middle 25, senior 15, manager 15, junior+middle 14, intern 11,
+manager+senior 10, lead 9, senior+middle 7, lead+senior 6...
+
+### Verify search multi-level:
+junior=71, middle=55, senior=42, manager=30, lead=20, intern=11, fresher=1
+(1 job match nhiều filter - đúng ý "search thành cả 2 loại")
+
+### 87/87 tests pass (+5: executive=junior VN, senior thắng executive,
+union với số năm, mid=0 không hạ cấp, search match-any)
