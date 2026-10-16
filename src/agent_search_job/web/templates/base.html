@@ -27,7 +27,7 @@
         <a href="/companies" {% if path == '/companies' %}aria-current="page"{% endif %}>{{ icon('building') }}Công ty</a>
         <a href="/saved" {% if path == '/saved' %}aria-current="page"{% endif %}>{{ icon('bookmark') }}Việc đã lưu</a>
       </nav>
-      <span class="who">{{ icon('user') }}{{ user.email }}</span>
+      <span class="who">{{ icon('user') }}{{ user.email or 'Khách' }}</span>
     </div>
   </header>
   {% endif %}

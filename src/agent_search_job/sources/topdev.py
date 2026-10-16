@@ -4,8 +4,9 @@
 - GET api.topdev.vn/td/v2/jobs?fields[job]=csv: status 200; salary là DICT với
   min/max bị che dấu (*), dùng min_filter/max_filter; level='free' (không dùng);
   addresses.full_addresses có quận.
-- JD đầy đủ: trang detail topdev.vn/viec-lam/{slug} server render inline JSON
-  "description":"..." (916+ chars) - fetch bằng httpx được, không cần Playwright.
+- JD đầy đủ: trang detail topdev.vn/viec-lam/{slug} server render HTML từng mục
+  (trách nhiệm / kỹ năng / quyền lợi) trong <div class="prose-ul"> - fetch bằng httpx
+  được, không cần Playwright. Inline JSON "description" có nhưng đã mất <li>.
 - HCM = region_ids=79. Keyword search "marketing" trả job thật.
 """
 from __future__ import annotations
@@ -19,6 +20,7 @@ import httpx
 
 from ..domain.models import NormalizedJob, SourceName, utcnow
 from .base import DiscoverInput, JobSourceAdapter, SourceHealth
+from .detail_fetchers import _strip
 
 BASE = "https://api.topdev.vn/td/v2/jobs"
 FIELDS_CSV = ("id,title,salary,company,detail_url,level,addresses,deadlines,"
@@ -139,7 +141,7 @@ class TopDevAdapter(JobSourceAdapter):
 
 
 async def fetch_topdev_detail(url: str, timeout: float = 20.0):
-    """JD đầy đủ từ trang detail TopDev - inline JSON 'description' server render."""
+    """JD đầy đủ từ trang detail TopDev: các khối prose-ul server render (giữ xuống dòng)."""
     async with httpx.AsyncClient(
         timeout=timeout, headers={"User-Agent": UA}, follow_redirects=True,
     ) as client:
@@ -147,29 +149,50 @@ async def fetch_topdev_detail(url: str, timeout: float = 20.0):
     if resp.status_code != 200:
         return None
     h = resp.text
-    description = ""
-    for m in re.finditer(r'"description":"((?:[^"\\]|\\.)*)"', h):
-        try:
-            val = json.loads('"' + m.group(1) + '"')
-        except json.JSONDecodeError:
+    # JD render sẵn trong các khối <div class="prose-ul"> (mỗi mục 1 khối: trách nhiệm,
+    # kỹ năng, quyền lợi) - còn nguyên <p>/<li>. JSON "description" của trang đã bị
+    # TopDev làm phẳng (các <li> dính liền nhau, verify 16/10/2026) -> chỉ là fallback.
+    desc_parts: list[str] = []
+    requirements = ""
+    benefits: list[str] = []
+    for m in re.finditer(
+        r'([^<>]+)</span><div class="mt-2"><div class="prose-ul[^"]*">(.*?)'
+        r'</div></div>(?=<span|</div>)', h, re.S,
+    ):
+        heading = html_lib.unescape(m.group(1)).strip()
+        text = _strip(m.group(2))
+        if not text:
             continue
-        text = re.sub(r"<[^>]+>", " ", val)
-        text = html_lib.unescape(re.sub(r"\s+", " ", text)).strip()
-        if len(text) > 100:
-            description = text[:4000]
-            break
+        low = heading.lower()
+        if any(k in low for k in ("kỹ năng", "yêu cầu", "skill", "requirement",
+                                  "qualification")):
+            requirements = text[:2000]
+        elif any(k in low for k in ("quyền lợi", "phúc lợi", "benefit")):
+            benefits = text.split("\n")[:20]
+        else:
+            desc_parts.append(text if not desc_parts else f"{heading}:\n{text}")
+    description = "\n".join(desc_parts)[:4000]
+    if not description:
+        for m in re.finditer(r'"description":"((?:[^"\\]|\\.)*)"', h):
+            try:
+                val = json.loads('"' + m.group(1) + '"')
+            except json.JSONDecodeError:
+                continue
+            text = _strip(val)
+            if len(text) > 100:
+                description = text[:4000]
+                break
     if not description:
         return None
-    # yêu cầu: tìm "requirements"/"skills" key tương tự
-    requirements = ""
-    for m in re.finditer(r'"(?:requirements|skills_str)":"((?:[^"\\]|\\.)*)"', h):
-        try:
-            val = json.loads('"' + m.group(1) + '"')
-        except json.JSONDecodeError:
-            continue
-        text = re.sub(r"<[^>]+>", " ", val)
-        text = html_lib.unescape(re.sub(r"\s+", " ", text)).strip()
-        if len(text) > 40:
-            requirements = text[:2000]
-            break
-    return {"description": description, "requirements": requirements}
+    if not requirements:
+        for m in re.finditer(r'"(?:requirements|skills_str)":"((?:[^"\\]|\\.)*)"', h):
+            try:
+                val = json.loads('"' + m.group(1) + '"')
+            except json.JSONDecodeError:
+                continue
+            text = _strip(val)
+            if len(text) > 40:
+                requirements = text[:2000]
+                break
+    return {"description": description, "requirements": requirements,
+            "benefits": benefits}

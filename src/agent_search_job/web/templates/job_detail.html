@@ -35,61 +35,63 @@
 </article>
 
 {% if analysis %}
-<section class="card ai">
+{% include "_jd_analysis.html" %}
+{% elif analysis_pending %}
+<section class="card ai ai-pending" id="jd-analysis" data-src="/jobs/{{ job.job_id }}/analysis" aria-live="polite" aria-busy="true">
   <h2 class="section-title">{{ icon('sparkles') }}Phân tích JD bằng AI</h2>
-  {% if analysis.summary %}<p class="prose" style="font-weight:600">{{ analysis.summary }}</p>{% endif %}
-  <div class="ai-grid">
-    {% if analysis.key_responsibilities %}
-    <div>
-      <h3>Trách nhiệm chính</h3>
-      <ul class="ticks">{% for r in analysis.key_responsibilities %}<li>{{ r }}</li>{% endfor %}</ul>
-    </div>
-    {% endif %}
-    {% if analysis.requirements %}
-    <div>
-      <h3>Yêu cầu bắt buộc</h3>
-      <ul class="cross">{% for r in analysis.requirements %}<li>{{ r }}</li>{% endfor %}</ul>
-    </div>
-    {% endif %}
-    {% if analysis.nice_to_have %}
-    <div>
-      <h3>Ưu tiên nếu có</h3>
-      <ul class="ticks">{% for r in analysis.nice_to_have %}<li>{{ r }}</li>{% endfor %}</ul>
-    </div>
-    {% endif %}
-    {% if analysis.perks %}
-    <div>
-      <h3>Quyền lợi nổi bật</h3>
-      <ul class="ticks">{% for r in analysis.perks %}<li>{{ r }}</li>{% endfor %}</ul>
-    </div>
-    {% endif %}
+  <div class="ai-loading">
+    <span class="spinner" aria-hidden="true"></span>
+    <span class="msg">AI đang phân tích JD, vui lòng chờ…</span>
   </div>
-  <div class="ai-foot">
-    {% if analysis.salary_hint and analysis.salary_hint != 'JD không ghi' %}
-    <span class="badge green">{{ icon('banknote') }}{{ analysis.salary_hint }}</span>
-    {% endif %}
-    {% if analysis.red_flags %}
-    <div class="red-flags">
-      <h3>{{ icon('alert-triangle') }}Điểm cần lưu ý</h3>
-      <ul class="cross">{% for r in analysis.red_flags %}<li>{{ r }}</li>{% endfor %}</ul>
-    </div>
-    {% endif %}
-    <span class="hint">Phân tích tự động bởi AI từ JD gốc — có thể sai, hãy đối chiếu JD đầy đủ bên dưới.</span>
-  </div>
+  <div class="ai-skeleton" aria-hidden="true"><i></i><i></i><i></i></div>
 </section>
+<script>
+(function () {
+  var box = document.getElementById("jd-analysis");
+  function soft(text) {
+    box.setAttribute("aria-busy", "false");
+    box.classList.add("ai-soft");
+    box.innerHTML = '<p class="ai-note"></p>';
+    box.querySelector(".ai-note").textContent = text;
+    var retry = document.createElement("button");
+    retry.type = "button"; retry.className = "btn ghost"; retry.textContent = "Thử lại";
+    retry.onclick = function () { location.reload(); };
+    box.appendChild(retry);
+  }
+  var ctrl = "AbortController" in window ? new AbortController() : null;
+  var timer = setTimeout(function () { ctrl && ctrl.abort(); }, 100000);
+  fetch(box.dataset.src, { credentials: "same-origin", signal: ctrl && ctrl.signal })
+    .then(function (r) {
+      if (r.status === 200) return r.text().then(function (html) { box.outerHTML = html; });
+      soft("AI chưa phân tích được JD này lúc này — bạn vẫn đọc đầy đủ JD gốc bên dưới.");
+    })
+    .catch(function () { soft("Phân tích AI mất quá lâu hoặc bị gián đoạn — bạn vẫn đọc đầy đủ JD gốc bên dưới."); })
+    .finally(function () { clearTimeout(timer); });
+})();
+</script>
 {% endif %}
+
+{% macro jd(text) -%}
+<div class="jd">
+  {%- for b in text | jd_blocks %}
+  {%- if b.kind == 'h' %}<h3>{{ b.text }}</h3>
+  {%- elif b.kind == 'ul' %}<ul class="ticks">{% for it in b['items'] %}<li>{{ it }}</li>{% endfor %}</ul>
+  {%- else %}<p>{{ b.text }}</p>{% endif %}
+  {%- endfor %}
+</div>
+{%- endmacro %}
 
 {% if job.description %}
 <section class="card">
   <h2 class="section-title">{{ icon('file-text') }}Mô tả công việc (JD gốc)</h2>
-  <div class="prose">{{ job.description[:4000] }}</div>
+  {{ jd(job.description) }}
 </section>
 {% endif %}
 
 {% if job.requirements %}
 <section class="card">
   <h2 class="section-title">{{ icon('list-checks') }}Yêu cầu</h2>
-  <div class="prose">{{ job.requirements[:3000] }}</div>
+  {{ jd(job.requirements) }}
 </section>
 {% endif %}
 

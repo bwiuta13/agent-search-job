@@ -30,7 +30,8 @@ Chỉ trả JSON đúng schema, không thêm chữ nào:
  "perks": ["quyền lợi nổi bật"],
  "red_flags": ["điểm cần lưu ý (lương không rõ, OT nhiều, yêu cầu đa nhiệm quá mức...)"]}
 Quy tắc:
-- Viết tiếng Việt tự nhiên, ngắn gọn, giữ thuật ngữ gốc (TikTok, CapCut, KPI...)
+- MỌI giá trị trong JSON phải viết bằng tiếng Việt tự nhiên, ngắn gọn — kể cả khi JD viết bằng tiếng Anh hay ngôn ngữ khác thì vẫn dịch sang tiếng Việt, không chép nguyên câu gốc
+- Chỉ giữ nguyên tên riêng, tên công ty/sản phẩm/nền tảng/công cụ và thuật ngữ quen dùng (TikTok, CapCut, KPI, SEO, UA...)
 - Không suy đoán thông tin JD không có; red_flags để [] nếu không có gì đáng ngờ
 - Mỗi mảng tối đa 5 phần tử, mỗi phần tử dưới 120 ký tự
 Suy nghĩ ngắn rồi trả JSON ở dòng cuối."""

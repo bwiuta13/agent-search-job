@@ -81,15 +81,18 @@ def in_multimedia_scope(title: str, description: str = "") -> bool:
     import re as _re
     boundary_hints = [
         "content", "nội dung", "social", "truyền thông", "media", "comms",
-        "copywriter", "seo", "video", "dựng", "editor", "design", "thiết kế",
-        "đồ họa", "graphic", "creative", "sáng tạo", "multimedia", "brand",
+        "copywriter", "seo", "video", "thiết kế", "đồ họa",
+        "graphic", "creative", "sáng tạo", "multimedia", "brand",
         "campaign", "chiến dịch", "kịch", "storyboard", "tiktok", "fanpage",
-        "photographer", "chụp ảnh", "marcom", "editorial", "writer", "viết",
+        "photographer", "chụp ảnh", "marcom", "editorial", "viết",
         "livestream", "live stream", "blogger", "podcast", "host", "mc",
     ]
     for h in boundary_hints:
         if _re.search(r"(?<![a-zà-ỹ])" + _re.escape(h) + r"(?![a-zà-ỹ])", text):
             return True
+    # 'dựng' chỉ là nghề khi đi cùng video/film/phim (tránh 'xây dựng')
+    if _re.search(r"dựng\s*(video|phim|film)|((video|phim|film)[^,.]{0,15}dựng)", text):
+        return True
     # hint dạng cụm có sẵn (trailing space giữ ngữ cảnh): 'pr ', 'mc '
     return any(h in text for h in ("pr ", "mc "))
 
@@ -105,6 +108,7 @@ class CrawlRunResult:
     updated: int = 0
     duplicates_skipped: int = 0
     out_of_scope: int = 0
+    out_of_hcm: int = 0
     errors: list[str] = field(default_factory=list)
     health: list[SourceHealth] = field(default_factory=list)
 
@@ -117,6 +121,7 @@ class CrawlRunResult:
             "updated": self.updated,
             "duplicates_skipped": self.duplicates_skipped,
             "out_of_scope": self.out_of_scope,
+            "out_of_hcm": self.out_of_hcm,
             "errors": self.errors,
             "health": [
                 {
@@ -131,6 +136,40 @@ class IngestPipeline:
     def __init__(self, store: JobStore, adapters: list[JobSourceAdapter]):
         self.store = store
         self.adapters = adapters
+
+    @staticmethod
+    def _is_hcm(job: NormalizedJob) -> bool:
+        """Bắt buộc job phải ở TP.HCM - hard-code theo đặc thù từng nguồn.
+
+        - vietnamworks/itviec: đã filter cityId/region HCM lúc discover (tin cậy)
+        - linkedin: location tự do -> kiểm tra text có dấu hiệu HCM
+        - topcv: search theo link HCM nhưng vẫn lọt job HN -> chặn theo text
+        - topdev: region_ids=79 -> tin cậy, nhưng vẫn kiểm tra text phòng leak
+        - vng: location "Thành phố Hồ Chí Minh" hoặc title ghi rõ (Bangkok/Jakarta
+          là vị trí làm việc thực tế của role -> loại)
+        """
+        if job.source in ("vietnamworks", "itviec", "topdev"):
+            # nguồn đã lọc HCM ở query; chỉ cần không có dấu hiệu nơi khác RÕ RỆNG
+            text = f"{job.title} {job.address}".lower()
+            other = ["hà nội", "hanoi", "đà nẵng", "da nang", "hải phòng",
+                     "bangkok", "jakarta", "sydney", "singapore", "gò công",
+                     "can tho", "cần thơ", "binh duong", "bình dương"]
+            # trừ khi HCM cũng xuất hiện cùng lúc (ví dụ "Hà Nội; HCM")
+            hcm = any(k in text for k in ("hồ chí minh", "ho chi minh", "hcm"))
+            if hcm:
+                return True
+            return not any(o in text for o in other)
+        # linkedin/topcv/vng/careerviet: phải có dấu hiệu HCM rõ
+        text = f"{job.city} {job.address} {job.title} {job.description[:200]}".lower()
+        hcm_signs = [
+            "hồ chí minh", "ho chi minh", "hcm", "tp.hcm", "tp hcm",
+            "sài gòn", "sai gon", "quận 1", "quận 3", "quận 7", "bình thạnh",
+            "thủ đức", "gò vấp", "phú nhuận", "tân bình", "tân phú",
+        ]
+        if any(k in text for k in hcm_signs):
+            return True
+        # fallback: flag is_hcm do normalize_job tính từ địa chỉ gốc
+        return bool(job.is_hcm)
 
     async def run(
         self,
@@ -178,6 +217,12 @@ class IngestPipeline:
                     if in_multimedia_scope(j.title, j.description or "")]
         result.out_of_scope = before_scope - len(raw_jobs)
 
+        # 3) HARD REQUIREMENT: TP.HCM - loại job không xác định được ở HCM
+        # (hard-code theo nguồn: mỗi nguồn có cách ghi location khác nhau)
+        before_hcm = len(raw_jobs)
+        raw_jobs = [j for j in raw_jobs if self._is_hcm(j)]
+        result.out_of_hcm = before_hcm - len(raw_jobs)
+
         # 3) dedupe + upsert (idempotent: cùng dedupe_key -> update, không insert mới)
         seen_keys: dict[str, int] = {}
         for job in raw_jobs:
@@ -190,7 +235,7 @@ class IngestPipeline:
                 continue
             existing = self.store.find_by_dedupe_key(key)
             if existing:
-                self.store.update_job(existing, job)
+                self.store.update_job(existing, job, keep_inactive=True)
                 result.updated += 1
                 seen_keys[key] = existing
             else:

@@ -407,6 +407,73 @@ class TestWebAPI:
         assert "Content Writer 0<" in r1.text + r2.text
         assert 'value="content"' in r2.text and "page=1" in r2.text
 
+    def test_job_detail_renders_without_waiting_llm(self, monkeypatch):
+        import agent_search_job.pipeline.jd_analysis as ja
+        import agent_search_job.web.app as appmod
+        monkeypatch.setenv("OPENAI_API_KEY", "k")
+        client = self._client()
+        job_id = appmod.get_store().insert_job(normalize_job(make_job(
+            description="x" * 300)))
+        calls = []
+
+        async def fake_analyze(self, job):
+            calls.append(job["job_id"])
+            return ja.JDAnalysis(summary="Tóm tắt AI cho job", key_responsibilities=["Viết bài"])
+        monkeypatch.setattr(ja.JDAnalyzer, "analyze", fake_analyze)
+
+        # lần đầu: chưa cache -> trang render ngay, không gọi LLM, có khối chờ
+        r = client.get(f"/jobs/{job_id}")
+        assert r.status_code == 200 and calls == []
+        assert "AI đang phân tích JD, vui lòng chờ" in r.text
+        assert f'data-src="/jobs/{job_id}/analysis"' in r.text
+        # JS gọi fragment -> LLM chạy, trả khối kết quả và ghi cache
+        frag = client.get(f"/jobs/{job_id}/analysis")
+        assert frag.status_code == 200 and calls == [job_id]
+        assert "Tóm tắt AI cho job" in frag.text and "<html" not in frag.text
+        # lần sau: cache -> hiện ngay, không spinner, không gọi LLM lại
+        r2 = client.get(f"/jobs/{job_id}")
+        assert "Tóm tắt AI cho job" in r2.text and "vui lòng chờ" not in r2.text
+        assert calls == [job_id]
+
+    def test_job_detail_llm_off_or_failed(self, monkeypatch):
+        import agent_search_job.pipeline.jd_analysis as ja
+        import agent_search_job.web.app as appmod
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        client = self._client()
+        job_id = appmod.get_store().insert_job(normalize_job(make_job(
+            description="x" * 300)))
+        r = client.get(f"/jobs/{job_id}")
+        assert r.status_code == 200 and "vui lòng chờ" not in r.text
+        assert client.get(f"/jobs/{job_id}/analysis").status_code == 204
+        # LLM bật nhưng lỗi -> 204 để trang báo nhẹ, không treo spinner
+        monkeypatch.setenv("OPENAI_API_KEY", "k")
+
+        async def broken(self, job):
+            return None
+        monkeypatch.setattr(ja.JDAnalyzer, "analyze", broken)
+        assert client.get(f"/jobs/{job_id}/analysis").status_code == 204
+        assert client.get("/jobs/999999/analysis").status_code == 404
+
+    def test_job_detail_formats_jd(self):
+        import agent_search_job.web.app as appmod
+        client = self._client()
+        raw = ('nhân viên bán hàng">\n\n\n   \n'
+               '   1. Sản xuất nội dung\n'
+               '   • Viết bài PR &amp; SEO\n\n\n'
+               '   • Dựng video ngắn\n'
+               '\n\nQuyền lợi:\n'
+               '  Lương tháng 13\n  Du lịch hằng năm\n')
+        job_id = appmod.get_store().insert_job(normalize_job(make_job(description=raw)))
+        html = client.get(f"/jobs/{job_id}").text
+        jd = html[html.index('<div class="jd">'):]
+        jd = jd[:jd.index("</div>")]
+        assert '">' not in jd.replace('<div class="jd">', "").replace('<ul class="ticks">', "")
+        assert "<h3>1. Sản xuất nội dung</h3>" in jd
+        assert "<li>Viết bài PR &amp; SEO</li><li>Dựng video ngắn</li>" in jd
+        assert "<h3>Quyền lợi</h3>" in jd
+        assert "<li>Lương tháng 13</li><li>Du lịch hằng năm</li>" in jd
+        assert "\n\n" not in jd
+
     def test_unauthenticated_blocked(self):
         from fastapi.testclient import TestClient
         import os
@@ -682,8 +749,11 @@ class TestJDAnalysis:
             def __init__(self, *a, **k): pass
             async def __aenter__(self): return self
             async def __aexit__(self, *a): return False
-            async def post(self, *a, **k): return FakeResp()
+            async def post(self, *a, **k):
+                sent.append(k["json"])
+                return FakeResp()
 
+        sent = []
         orig = ja.httpx
         import httpx as real_httpx
         ja.httpx = type("m", (), {"AsyncClient": FakeClient})
@@ -699,6 +769,9 @@ class TestJDAnalysis:
             assert len(result.key_responsibilities) == 5  # clip 6 -> 5
             assert all(len(r) <= 120 for r in result.key_responsibilities)
             assert result.salary_hint == "15-20 triệu"
+            # JD tiếng Anh vẫn phải được dịch sang tiếng Việt
+            system = sent[0]["messages"][0]["content"]
+            assert "dịch sang tiếng Việt" in system
         finally:
             ja.httpx = orig
 
@@ -708,6 +781,59 @@ class TestJDAnalysis:
         an = JDAnalyzer(LLMConfig(api_key="k"))
         assert await an.analyze({"title": "t", "description": "ngắn",
                                  "requirements": "", "company_name": "c"}) is None
+
+
+class TestTopCVDetail:
+    async def test_jd_taken_from_h2_block_not_blog_menu(self, monkeypatch):
+        """Menu TopCV có bài blog title="...mô tả công việc..." trước JD thật."""
+        import types
+        from agent_search_job.sources.detail_fetchers import fetch_detail
+        page_html = (
+            '<a title="Nhân viên bán hàng là gì? Bảng mô tả công việc nhân viên bán hàng">'
+            '<div>Nhân viên bán hàng là gì?</div><div>Khám phá mức lương Kế toán mới nhất</div></a>'
+            '<div class="box"><h2 class="t">\n  Mô tả công việc\n</h2>'
+            '<div><ul><li>  Lập kế hoạch nội dung</li>\n\n\n<li>Viết kịch bản video</li></ul></div>'
+            '<h2>Yêu cầu ứng viên</h2><div><p>2 năm kinh nghiệm</p></div>'
+            '<h2>Quyền lợi ứng viên</h2><div><p>Lương tháng 13</p><p>BHXH</p></div>'
+            '<h2>Địa điểm</h2></div>'
+        )
+
+        class Obj:
+            def __init__(self, **kw): self.__dict__.update(kw)
+
+        async def noop(*a, **k): return None
+
+        async def boom(*a, **k): raise TimeoutError
+
+        async def content(): return page_html
+        page = Obj(goto=noop, click=boom, wait_for_timeout=noop, content=content)
+
+        async def new_page(): return page
+
+        async def new_context(**k): return Obj(new_page=new_page)
+        browser = Obj(new_context=new_context, close=noop)
+
+        async def launch(**k): return browser
+
+        class PW:
+            async def __aenter__(self): return Obj(chromium=Obj(launch=launch))
+            async def __aexit__(self, *a): return False
+        mod = types.ModuleType("playwright.async_api")
+        mod.async_playwright = PW
+        monkeypatch.setitem(sys.modules, "playwright.async_api", mod)
+
+        d = await fetch_detail("topcv", "https://www.topcv.vn/viec-lam/x/1.html")
+        assert d.description == "Lập kế hoạch nội dung\nViết kịch bản video"
+        assert d.requirements == "2 năm kinh nghiệm"
+        assert d.benefits == ["Lương tháng 13", "BHXH"]
+
+        # tin tiếng Anh trên TopCV
+        page_html = ('<h2>Job Description</h2><div><p>Plan social content</p></div>'
+                     '<h2>Candidate Requirements</h2><div><p>2 years</p></div>'
+                     '<h2>Benefits</h2><div><p>13th salary</p></div><h2>Address</h2>')
+        d = await fetch_detail("topcv", "https://www.topcv.vn/viec-lam/x/2.html")
+        assert (d.description, d.requirements, d.benefits) == (
+            "Plan social content", "2 years", ["13th salary"])
 
 
 # ---------------------------------------------------------------------------
@@ -911,3 +1037,71 @@ class TestVNGCareers:
         # 'design' trong 'designed' không được tính
         assert not in_multimedia_scope("Fintech Analyst", "system designed for trading")
         assert in_multimedia_scope("PR Executive", "truyền thông")
+
+
+# ---------------------------------------------------------------------------
+# HCM hard requirement (hard-code theo nguồn)
+# ---------------------------------------------------------------------------
+
+class TestHCMHardRequirement:
+    def test_is_hcm_by_source(self):
+        from agent_search_job.pipeline.ingest import IngestPipeline
+        j1 = normalize_job(make_job(source="linkedin", address="Gò Công, Vietnam",
+                                    city="Gò Công"))
+        assert not IngestPipeline._is_hcm(j1)
+        j2 = normalize_job(make_job(source="topcv", address="Hà Nội, Việt Nam",
+                                    city="Hà Nội"))
+        assert not IngestPipeline._is_hcm(j2)
+        j3 = normalize_job(make_job(source="topcv", address="",
+                                    description="làm việc tại Quận 1, TP.HCM"))
+        assert IngestPipeline._is_hcm(j3)
+
+    def test_pipeline_counts_out_of_hcm(self):
+        from agent_search_job.pipeline.ingest import IngestPipeline
+        from agent_search_job.domain.models import NormalizedJob
+
+        class FakeAdapter:
+            name = "linkedin"
+            async def health_check(self):
+                from agent_search_job.sources.base import SourceHealth
+                return SourceHealth(source=self.name, ok=True, latency_ms=1,
+                                    checked_at=None)
+            async def discover(self, input):
+                for t, addr in (("Content HCM", "Ho Chi Minh"),
+                                ("Content HN", "Hà Nội")):
+                    yield NormalizedJob(title=t, company_name=f"C_{t}",
+                                        address=addr, city=addr,
+                                        source=self.name, source_job_id=t)
+
+        store = JobStore(":memory:")
+        pipeline = IngestPipeline(store, [FakeAdapter()])
+        import asyncio
+        r = asyncio.run(pipeline.run(queries=["content"], max_results_per_query=10))
+        assert r.inserted == 1
+        assert r.out_of_hcm == 1
+
+    def test_update_keep_inactive(self):
+        store = JobStore(":memory:")
+        j = normalize_job(make_job())
+        jid = store.insert_job(j)
+        with store.conn:
+            store.conn.execute("UPDATE jobs SET is_active=0 WHERE job_id=?", (jid,))
+        j2 = normalize_job(make_job())
+        store.update_job(jid, j2, keep_inactive=True)
+        row = store.get_job(jid)
+        assert row["is_active"] == 0
+        # không keep_inactive -> active lại bình thường
+        store.update_job(jid, j2)
+        assert store.get_job(jid)["is_active"] == 1
+
+    def test_scope_no_design_verb_false_positive(self):
+        from agent_search_job.pipeline.ingest import in_multimedia_scope
+        # 'to design and operate' (động từ) không phải nghề design
+        assert not in_multimedia_scope(
+            "AI Engineer, Zalopay",
+            "We are hiring an AI Engineer to design and operate production-grade AI/ML systems")
+        # 'xây dựng' không phải 'dựng video'
+        assert not in_multimedia_scope(
+            "DevOps Engineer", "xây dựng và vận hành các giải pháp AI")
+        assert in_multimedia_scope("Video Editor", "dựng video tiktok")
+        assert in_multimedia_scope("Nhân viên dựng phim", "montage")

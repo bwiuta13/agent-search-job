@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from html import unescape
 from typing import Optional
 
 import httpx
@@ -40,9 +41,10 @@ def _strip(html: str) -> str:
     html = re.sub(r"<br\s*/?>", "\n", html, flags=re.I)
     html = re.sub(r"</(p|li|div|h\d)>", "\n", html, flags=re.I)
     html = re.sub(r"<[^>]+>", " ", html)
-    html = html.replace("&nbsp;", " ").replace("&amp;", "&")
-    html = re.sub(r"&#\d+;", "'", html)
-    return re.sub(r"[ \t]+", " ", html).strip()
+    html = unescape(html).replace("\xa0", " ")
+    # mỗi dòng bỏ khoảng trắng đầu/cuối, gộp các dòng trống liên tiếp
+    lines = [re.sub(r"[ \t]+", " ", ln).strip() for ln in html.split("\n")]
+    return "\n".join(ln for ln in lines if ln)
 
 
 def _section_after(html: str, heading_pattern: str, max_len: int = 6000) -> str:
@@ -150,9 +152,16 @@ class TopCVDetailFetcher:
         except Exception:  # noqa: BLE001 - browser lỗi -> None
             return None
         d = JobDetail()
-        d.description = _section_after(html, r"(?:Mô tả công việc)")
-        d.requirements = _section_after(html, r"(?:Yêu cầu ứng viên)")
-        benefits_raw = _section_after(html, r"(?:Quyền lợi được hưởng)")
+        # Neo vào thẻ <h2> của khối JD: menu "Cẩm nang" của TopCV có bài blog
+        # title="...Bảng mô tả công việc nhân viên bán hàng" nằm trước JD, khớp
+        # chữ trần sẽ lấy nhầm menu + blog thay cho JD.
+        # tin tiếng Anh dùng Job Description / Candidate Requirements / Benefits
+        d.description = _section_after(
+            html, r"<h2[^>]*>\s*(?:Mô tả công việc|Job Description)\s*</h2>")
+        d.requirements = _section_after(
+            html, r"<h2[^>]*>\s*(?:Yêu cầu ứng viên|Candidate Requirements?)\s*</h2>")
+        benefits_raw = _section_after(
+            html, r"<h2[^>]*>\s*(?:Quyền lợi[^<]*|Benefits)\s*</h2>")
         if benefits_raw:
             d.benefits = [ln.strip()[:120] for ln in benefits_raw.split("\n")
                           if ln.strip()][:10]
@@ -192,6 +201,7 @@ async def fetch_detail(source: str, url: str,
         if not d:
             return None
         return JobDetail(description=d.get("description", ""),
-                         requirements=d.get("requirements", ""))
+                         requirements=d.get("requirements", ""),
+                         benefits=d.get("benefits", []))
     # vietnamworks: JD có sẵn từ search API; linkedin: dùng JobSpy
     return None

@@ -227,8 +227,19 @@ class JobStore:
         ).fetchone()
         return row["job_id"] if row else None
 
-    def update_job(self, job_id: int, job: NormalizedJob):
-        """Update các field mutable; giữ first_seen_at."""
+    def update_job(self, job_id: int, job: NormalizedJob, keep_inactive: bool = False):
+        """Update các field mutable; giữ first_seen_at.
+
+        keep_inactive: nếu job đang inactive (bị lọc scope/out-of-HCM/hết hạn),
+        crawl mới KHÔNG được bật lại is_active - tránh job đã loại quay lại.
+        """
+        active_flag = int(bool(job.is_active))
+        if keep_inactive:
+            row = self.conn.execute(
+                "SELECT is_active FROM jobs WHERE job_id=?", (job_id,)
+            ).fetchone()
+            if row and not row["is_active"]:
+                active_flag = 0  # không mutate job object
         with self.conn:
             self.conn.execute(
                 """UPDATE jobs SET title=?, company_name=?, role_cluster=?,
@@ -252,7 +263,7 @@ class JobStore:
                      0 if job.portfolio_required is False else None),
                     job.deadline.isoformat() if job.deadline else None,
                     job.description, job.requirements, json.dumps(job.benefits),
-                    job.apply_url, json.dumps(job.languages), int(job.is_active),
+                    job.apply_url, json.dumps(job.languages), active_flag,
                     job.source, job.source_url, job.source_job_id,
                     job.last_verified_at.isoformat(), job_id,
                 ),

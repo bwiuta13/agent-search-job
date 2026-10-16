@@ -21,7 +21,8 @@ from ..domain.models import NormalizedJob, SourceName, utcnow
 from .base import DiscoverInput, JobSourceAdapter, SourceHealth
 
 BASE = "https://career.vng.com.vn/vi/tim-kiem-viec-lam"
-LIST_URL = "https://career.vng.com.vn/co-hoi-nghe-nghiep"
+LIST_URL = "https://career.vng.com.vn/co-hoi-nghe-nghiep"  # fallback (không phân trang)
+DETAIL_LIST = "https://career.vng.com.vn/tim-kiem-viec-lam/chi-tiet"
 DETAIL_BASE = "https://career.vng.com.vn/vi/job"
 
 UA = (
@@ -39,7 +40,9 @@ def _strip_html(text: str) -> str:
 
 
 async def _fetch_page(client: httpx.AsyncClient, page: int) -> tuple[list[dict], int]:
-    resp = await client.get(LIST_URL, params={"page": page})
+    # PHẢI dùng /vi/tim-kiem-viec-lam?page=N - URL /co-hoi-nghe-nghiep BỎ QUA page
+    # param (trả y hệt 10 job đầu mọi trang) -> mất 68/78 job (verify 16/10/2026)
+    resp = await client.get(BASE, params={"page": page})
     if resp.status_code != 200:
         return [], 0
     m = re.search(
@@ -70,18 +73,28 @@ class VNGCareersAdapter(JobSourceAdapter):
         ) as client:
             total = 0
             emitted = 0
+            seen_ids: set[str] = set()  # dedupe trong discover (phòng server lặp trang)
             for page in range(1, self.max_pages + 1):
                 jobs, t = await _fetch_page(client, page)
                 if not jobs:
                     break
                 total = t or total
+                new_in_page = 0
                 for raw in jobs:
+                    key = str(raw.get("job_id") or raw.get("slug") or "")
+                    if key and key in seen_ids:
+                        continue
+                    if key:
+                        seen_ids.add(key)
                     if emitted >= input.max_results:
                         return
                     j = self._to_job(raw)
                     if j:
                         emitted += 1
+                        new_in_page += 1
                         yield j
+                if new_in_page == 0 and page > 1:
+                    break  # trang lặp -> hết dữ liệu mới
                 if page * 10 >= total:
                     break
 
@@ -92,7 +105,7 @@ class VNGCareersAdapter(JobSourceAdapter):
         loc = str(raw.get("location") or "")
         desc = _strip_html(str(raw.get("description") or ""))[:4000]
         slug = str(raw.get("slug") or "")
-        detail_url = f"{DETAIL_BASE}/{slug}" if slug else LIST_URL
+        detail_url = f"{DETAIL_LIST}/{slug}" if slug else LIST_URL
         return NormalizedJob(
             title=title,
             company_name="VNG Corporation",

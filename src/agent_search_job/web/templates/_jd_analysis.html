@@ -1,0 +1,45 @@
+{# Khối phân tích JD bằng AI: include trong job_detail.html (khi có cache) và trả
+   riêng qua GET /jobs/{id}/analysis cho trang tải bất đồng bộ. #}
+{% from "_macros.html" import icon %}
+<section class="card ai" id="jd-analysis">
+  <h2 class="section-title">{{ icon('sparkles') }}Phân tích JD bằng AI</h2>
+  {% if analysis.summary %}<p class="ai-summary">{{ analysis.summary }}</p>{% endif %}
+  <div class="ai-grid">
+    {% if analysis.key_responsibilities %}
+    <div>
+      <h3>Trách nhiệm chính</h3>
+      <ul class="ticks">{% for r in analysis.key_responsibilities %}<li>{{ r }}</li>{% endfor %}</ul>
+    </div>
+    {% endif %}
+    {% if analysis.requirements %}
+    <div>
+      <h3>Yêu cầu bắt buộc</h3>
+      <ul class="cross">{% for r in analysis.requirements %}<li>{{ r }}</li>{% endfor %}</ul>
+    </div>
+    {% endif %}
+    {% if analysis.nice_to_have %}
+    <div>
+      <h3>Ưu tiên nếu có</h3>
+      <ul class="ticks">{% for r in analysis.nice_to_have %}<li>{{ r }}</li>{% endfor %}</ul>
+    </div>
+    {% endif %}
+    {% if analysis.perks %}
+    <div>
+      <h3>Quyền lợi nổi bật</h3>
+      <ul class="ticks">{% for r in analysis.perks %}<li>{{ r }}</li>{% endfor %}</ul>
+    </div>
+    {% endif %}
+  </div>
+  <div class="ai-foot">
+    {% if analysis.salary_hint and analysis.salary_hint != 'JD không ghi' %}
+    <span class="badge green">{{ icon('wallet') }}{{ analysis.salary_hint }}</span>
+    {% endif %}
+    {% if analysis.red_flags %}
+    <div class="red-flags">
+      <h3>{{ icon('alert') }}Điểm cần lưu ý</h3>
+      <ul class="cross">{% for r in analysis.red_flags %}<li>{{ r }}</li>{% endfor %}</ul>
+    </div>
+    {% endif %}
+    <span class="hint">Phân tích tự động bởi AI từ JD gốc — có thể sai, hãy đối chiếu JD đầy đủ bên dưới.</span>
+  </div>
+</section>

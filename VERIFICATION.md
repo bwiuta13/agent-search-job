@@ -187,3 +187,37 @@ level classify, search level+company, contracts validation)
 ### Trạng thái cuối: 202 job active scope Truyền thông đa phương tiện
 - vietnamworks 72, linkedin 55, topcv 44, topdev 30, vng 1 (VNG tuyển ít vị trí truyền thông)
 - 68/68 tests pass (+2: VNG adapter parse __NEXT_DATA__, boundary false positive)
+
+
+## 11. Fix HCM hard requirement + VNG pagination + scope leak (16/10/2026, theo feedback user)
+
+### Bug 1: VNG chỉ lấy được 10/78 job (mất Content Marketing Collaborator)
+- Nguyên nhân: URL `/co-hoi-nghe-nghiep?page=N` BỎ QUA page param (mọi trang trả
+  y hệt 10 job đầu); phải dùng `/vi/tim-kiem-viec-lam?page=N` (verify: page 2 job
+  đầu khác page 1, 78 unique jobs qua 8 trang)
+- Fix: đổi LIST URL + dedupe job_id trong discover + dừng khi trang lặp
+- Kết quả: rescan VNG -> 13 job active scope truyền thông, **có Content Marketing
+  Collaborator** + Social Marketing/Chinese Localization/Marketing Operations
+  Collaborator, Digital Marketing Intern, Brand Specialist, Growth Marketing Exec...
+
+### Bug 2: 26 job ngoài HCM vẫn active (Hà Nội, Gò Công...)
+- Fix: `IngestPipeline._is_hcm()` hard-code theo nguồn:
+  - vietnamworks/itviec/topdev: tin query HCM, chỉ loại khi text rõ ràng nơi khác
+    (Hà Nội/Bangkok/Jakarta...) mà không có dấu hiệu HCM
+  - linkedin/topcv/vng/careerviet: PHẢI có dấu hiệu HCM (hồ chí minh/ho chi minh/
+    quận 1-7/bình thạnh/thủ đức...) hoặc flag is_hcm từ normalize
+- Pipeline stat mới `out_of_hcm`; deactivate 26 job trong DB
+
+### Bug 3: crawl mới bật lại job đã bị lọc (AI/QC/Backend Engineer của VNG active)
+- Nguyên nhân 1: `update_job` luôn set is_active=1 khi job đã tồn tại
+  -> Fix: `keep_inactive=True` từ ingest (job bị lọc scope/HCM không sống lại)
+- Nguyên nhân 2: scope false positive - 'design' trong "to design and operate"
+  (động từ) và 'dựng' trong 'xây dựng' tính là hint nghề
+  -> Fix: bỏ 'design'/'editor'/'writer' khỏi TEXT hints (giữ title hints);
+  'dựng' chỉ tính khi cạnh video/film/phim
+- Deactivate thêm 8 job engineer; **183 active, 0 ngoài HCM, 0 ngoài scope**
+
+### Trạng thái cuối: 183 job active (tất cả HCM, tất cả truyền thông đa phương tiện)
+- vietnamworks 68, linkedin 53, topdev 28, topcv 21, vng 13
+- 76/76 tests pass (+4: _is_hcm theo nguồn, pipeline out_of_hcm, keep_inactive,
+  scope design/dựng false positive)

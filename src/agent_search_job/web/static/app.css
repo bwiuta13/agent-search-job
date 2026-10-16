@@ -340,11 +340,50 @@ footer.site { text-align: center; color: var(--muted); font-size: 12.5px; paddin
 .ai-grid h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted, #5b6577); margin: 0 0 8px; }
 .ai-foot { margin-top: 14px; display: flex; flex-direction: column; gap: 10px; }
 .ai-foot .hint { font-size: 12px; color: var(--muted, #5b6577); }
-.red-flags h3 { color: #b3541e; font-size: 13px; margin: 0 0 6px; }
+.red-flags h3 { display: flex; align-items: center; gap: 6px; color: #b3541e; font-size: 13px; margin: 0 0 6px; }
+.ai-foot .badge { align-self: flex-start; }
 ul.cross { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; }
 ul.cross li { position: relative; padding-left: 24px; }
 ul.cross li::before { content: "✓"; position: absolute; left: 0; color: var(--ok, #1a7f4f); font-weight: 700; }
 .red-flags ul.cross li::before { content: "!"; color: #b3541e; }
+.ai-summary { font-weight: 600; font-size: 15px; margin: 4px 0 0; }
+/* chờ AI: spinner cánh hoa hồng + skeleton */
+.ai-loading { display: flex; align-items: center; gap: 12px; color: var(--accent); font-weight: 600; margin-top: 6px; }
+.spinner {
+  width: 22px; height: 22px; flex: none; border-radius: 50%;
+  border: 3px solid var(--petal); border-top-color: var(--rose-deep); border-right-color: var(--rose);
+  animation: spin .8s linear infinite;
+}
+.ai-skeleton { display: grid; gap: 10px; margin-top: 16px; }
+.ai-skeleton i {
+  display: block; height: 12px; border-radius: 999px;
+  background: linear-gradient(90deg, var(--petal) 0%, #fff 50%, var(--petal) 100%) 0 0 / 200% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+}
+.ai-skeleton i:nth-child(2) { width: 82%; }
+.ai-skeleton i:nth-child(3) { width: 64%; }
+.ai-soft { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap;
+  border-left-color: var(--rose); background: #fffafc; }
+.ai-note { margin: 0; color: var(--muted); font-size: 14px; }
+.btn.ghost { background: var(--petal); color: var(--accent); padding: 9px 16px; font-size: 13.5px; box-shadow: none; }
+.btn.ghost:hover { background: var(--rose); color: var(--ink); }
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation-duration: 2.4s; }
+  .ai-skeleton i { animation: none; }
+}
+
+/* --- JD gốc: đoạn + bullet thoáng --- */
+.jd { font-size: 15px; line-height: 1.75; max-width: 72ch; }
+.jd > :first-child { margin-top: 0; }
+.jd p { margin: 0 0 12px; overflow-wrap: anywhere; }
+.jd h3 {
+  font-family: var(--font-body); font-size: 14px; font-weight: 700; color: var(--accent);
+  margin: 18px 0 8px; letter-spacing: 0;
+}
+.jd ul.ticks { gap: 9px; margin: 0 0 14px; }
+.jd ul.ticks li { overflow-wrap: anywhere; }
 
 /* --- Rescan tray + companies page --- */
 .rescan-tray { margin: 10px 0 4px; }
