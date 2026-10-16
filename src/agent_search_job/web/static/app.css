@@ -392,6 +392,103 @@ ul.cross li::before { content: "✓"; position: absolute; left: 0; color: var(--
 .rescan summary:hover { color: var(--ink, #1a2233); }
 .rescan .filters { margin-top: 10px; }
 .rescan .hint { font-size: 12px; color: var(--muted, #5b6577); margin: 8px 0 0; }
+/* panel quét: radar hồng + thanh quét + log trực tiếp */
+.scan-panel { margin-bottom: 12px; padding: 14px 16px; border-radius: 14px; background: #fff;
+  border: 1px solid var(--line); box-shadow: var(--shadow); }
+.scan-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.scan-title { display: flex; flex-direction: column; flex: 1; min-width: 180px; }
+.scan-title strong { font-size: 15px; color: var(--ink); }
+.scan-title span { font-size: 12.5px; color: var(--muted); }
+.scan-radar {
+  position: relative; width: 34px; height: 34px; flex: none; border-radius: 50%;
+  background: var(--petal); border: 2px solid var(--rose); overflow: hidden;
+}
+.scan-radar::before {
+  content: ""; position: absolute; inset: 0; border-radius: 50%;
+  background: conic-gradient(from 0deg, rgba(238, 148, 179, 0) 0deg, rgba(238, 148, 179, .9) 70deg, rgba(238, 148, 179, 0) 90deg);
+}
+.scan-radar::after {
+  content: ""; position: absolute; left: 50%; top: 50%; width: 6px; height: 6px; margin: -3px 0 0 -3px;
+  border-radius: 50%; background: var(--accent);
+}
+.scan-panel.running .scan-radar::before { animation: spin 1.6s linear infinite; }
+.scan-panel:not(.running) .scan-radar { background: var(--mint-bg); border-color: #9ad8bd; }
+.scan-panel:not(.running) .scan-radar::before { background: none; }
+.scan-panel:not(.running) .scan-radar::after { background: var(--mint); }
+.scan-panel.failed .scan-radar { background: var(--warn-bg); border-color: #f0c08a; }
+.scan-panel.failed .scan-radar::after { background: var(--warn); }
+.scan-bar { height: 4px; border-radius: 999px; background: var(--petal); overflow: hidden; margin: 12px 0 10px; }
+.scan-bar i { display: block; height: 100%; width: 0; border-radius: inherit; background: var(--rose-deep); }
+.scan-panel.running .scan-bar i { width: 35%; animation: scanbar 1.4s ease-in-out infinite; }
+.scan-panel:not(.running) .scan-bar i { width: 100%; background: var(--mint); }
+.scan-panel.failed .scan-bar i { background: var(--warn); }
+@keyframes scanbar { from { transform: translateX(-100%); } to { transform: translateX(300%); } }
+.scan-log {
+  list-style: none; margin: 0; padding: 6px; max-height: 260px; overflow: auto;
+  background: #fffafc; border: 1px solid var(--line); border-radius: 12px;
+  font-size: 13.5px; line-height: 1.55; color: var(--ink); scroll-behavior: smooth;
+}
+.scan-log:empty::before { content: "Đang chờ log đầu tiên…"; display: block; padding: 6px 8px; color: var(--muted); }
+.scan-log li {
+  position: relative; display: flex; align-items: baseline; gap: 10px;
+  padding: 5px 8px 5px 22px; border-radius: 8px; overflow-wrap: anywhere;
+}
+.scan-log li + li { margin-top: 2px; }
+.scan-log li::before {
+  content: ""; position: absolute; left: 9px; top: 13px; width: 6px; height: 6px;
+  border-radius: 50%; background: var(--rose);
+}
+.scan-log li:last-child { background: #fff0f5; }
+.scan-log time {
+  flex: none; font: 600 11.5px/1.9 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums; padding: 0 7px; border-radius: 6px;
+  background: var(--petal); color: var(--accent);
+}
+.scan-log .msg { flex: 1; min-width: 0; }
+.scan-log .t-src {
+  display: inline-block; padding: 0 7px; border-radius: 999px; font-size: 12px; font-weight: 700;
+  line-height: 1.7; background: var(--lilac-bg); color: var(--lilac); text-transform: capitalize;
+}
+.scan-log .t-kw { color: var(--accent); font-weight: 600; }
+.scan-log .t-res { color: var(--mint); font-weight: 700; }
+.scan-log .t-ok { display: inline-block; padding: 0 6px; border-radius: 6px; font-size: 12px; font-weight: 700;
+  line-height: 1.7; background: var(--mint-bg); color: var(--mint); }
+.scan-log .t-bad { color: #b42318; font-weight: 700; }
+.scan-log .t-num { font-weight: 700; font-variant-numeric: tabular-nums; }
+.scan-log .lv-warning { background: var(--warn-bg); }
+.scan-log .lv-warning::before { background: var(--warn); }
+.scan-log .lv-warning time { background: #ffe7cc; color: var(--warn); }
+.scan-log .lv-error { background: #fdecec; }
+.scan-log .lv-error::before { background: #b42318; }
+.scan-log .lv-error time { background: #f9d4d4; color: #b42318; }
+.scan-log .lv-error .msg { color: #8f1c13; font-weight: 600; }
+.scan-close {
+  flex: none; display: inline-grid; place-items: center; width: 34px; height: 34px; padding: 0;
+  border: 1px solid var(--line); border-radius: 50%; background: #fff; color: var(--muted); cursor: pointer;
+}
+.scan-close:hover { background: var(--petal); color: var(--accent); border-color: var(--rose); }
+.scan-close .i { width: 16px; height: 16px; }
+.scan-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  flex-wrap: wrap; margin-top: 12px; }
+.scan-stats { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { display: inline-flex; align-items: center; padding: 4px 11px; border-radius: 999px;
+  font-size: 12.5px; font-weight: 700; }
+.chip.new { background: var(--mint-bg); color: var(--mint); }
+.chip.upd { background: var(--lilac-bg); color: var(--lilac); }
+.chip.jd { background: var(--petal); color: var(--accent); }
+.chip.ok { background: #f3faf6; color: var(--mint); }
+.chip.err { background: var(--warn-bg); color: var(--warn); }
+.btn.scan-reload { padding: 10px 18px; font-size: 14px; }
+.scan-panel [hidden] { display: none; }
+@media (prefers-reduced-motion: reduce) {
+  .scan-panel.running .scan-radar::before { animation-duration: 4s; }
+  .scan-panel.running .scan-bar i { animation: none; width: 100%; opacity: .6; }
+}
+@media (max-width: 640px) {
+  .scan-log { max-height: 220px; font-size: 13px; }
+  .scan-log li { flex-wrap: wrap; gap: 4px 8px; }
+  .scan-foot .btn.scan-reload { width: 100%; }
+}
 .company-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 12px; }
 .company-card { display: block; padding: 14px 16px; text-decoration: none; }

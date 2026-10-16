@@ -48,7 +48,23 @@
 
 <p class="count">Tìm thấy <strong>{{ total }}</strong> việc làm đang mở tại TP.HCM.{% if pages > 1 %} <span class="page-of">Trang {{ page }}/{{ pages }}</span>{% endif %}</p>
 
-<section class="tray rescan-tray">
+<section class="tray rescan-tray" id="rescan">
+  <div class="scan-panel" id="scan-panel" hidden>
+    <div class="scan-head">
+      <span class="scan-radar" aria-hidden="true"></span>
+      <div class="scan-title">
+        <strong id="scan-title">Đang quét dữ liệu nguồn…</strong>
+        <span id="scan-meta"></span>
+      </div>
+      <button type="button" class="scan-close" id="scan-hide" aria-label="Ẩn log" title="Ẩn log" hidden>{{ icon('x') }}</button>
+    </div>
+    <div class="scan-bar" aria-hidden="true"><i></i></div>
+    <ol class="scan-log" id="scan-log" aria-live="polite" aria-label="Log quét"></ol>
+    <div class="scan-foot" id="scan-foot" hidden>
+      <div class="scan-stats" id="scan-stats"></div>
+      <a class="btn scan-reload" href="/search">{{ icon('refresh') }}Tải lại kết quả</a>
+    </div>
+  </div>
   <details class="rescan">
     <summary>{{ icon('refresh') }} Quét lại dữ liệu nguồn</summary>
     <form class="filters" method="post" action="/rescan">
@@ -57,6 +73,7 @@
         <option value="vietnamworks">VietnamWorks</option>
         <option value="itviec">ITviec</option>
         <option value="careerviet">CareerViet</option>
+        <option value="topcv">TopCV</option>
         <option value="linkedin">LinkedIn</option>
         <option value="topdev">TopDev</option>
         <option value="vng">VNG Careers</option>
@@ -65,9 +82,106 @@
       <input type="number" name="max_results" value="15" min="1" max="50" aria-label="Số kết quả tối đa mỗi nguồn" style="max-width:120px">
       <button class="btn go" type="submit">{{ icon('refresh') }}Quét ngay</button>
     </form>
-    <p class="hint">Quét chạy nền — có thể mất 1-2 phút. Dữ liệu hiện tại vẫn dùng được trong lúc chờ.</p>
+    <p class="hint">Quét chạy nền — có thể mất vài phút (TopCV, LinkedIn chậm hơn). Dữ liệu hiện tại vẫn dùng được trong lúc chờ.</p>
   </details>
 </section>
+<script>
+(function () {
+  var panel = document.getElementById("scan-panel"), list = document.getElementById("scan-log");
+  var title = document.getElementById("scan-title"), meta = document.getElementById("scan-meta");
+  var foot = document.getElementById("scan-foot"), stats = document.getElementById("scan-stats");
+  var hide = document.getElementById("scan-hide");
+  var form = document.querySelector("#rescan form"), btn = form.querySelector("button[type=submit]");
+  var timer = null, shown = 0, lastStart = null;
+  var NAMES = { all: "mọi nguồn", vietnamworks: "VietnamWorks", itviec: "ITviec", careerviet: "CareerViet",
+                topcv: "TopCV", linkedin: "LinkedIn", topdev: "TopDev", vng: "VNG Careers" };
+  // tô sáng trong dòng log: tên nguồn, 'từ khóa', kết quả +mới/cập nhật, OK, lỗi/429, con số
+  var HL = /\b(vietnamworks|topcv|linkedin|itviec|careerviet|topdev|vng)\b|('[^']*')|(\+\d+ mới|\d+ cập nhật)|(\bOK\b)|(lỗi|\b429\b|không lấy được|Timeout\w*|Error\w*)|(\d+(?:[.,]\d+)?)/gi;
+  var HL_CLASS = [null, "t-src", "t-kw", "t-res", "t-ok", "t-bad", "t-num"];
+  function highlight(el, text) {
+    var last = 0, m;
+    HL.lastIndex = 0;
+    while ((m = HL.exec(text))) {
+      if (m.index > last) el.appendChild(document.createTextNode(text.slice(last, m.index)));
+      var span = document.createElement("span");
+      for (var g = 1; g < HL_CLASS.length; g++) if (m[g] !== undefined) { span.className = HL_CLASS[g]; break; }
+      span.textContent = m[0];
+      el.appendChild(span);
+      last = m.index + m[0].length;
+    }
+    if (last < text.length) el.appendChild(document.createTextNode(text.slice(last)));
+  }
+  function chip(cls, text) {
+    var c = document.createElement("span");
+    c.className = "chip " + cls; c.textContent = text;
+    stats.appendChild(c);
+  }
+  function hiddenFor() { try { return localStorage.getItem("scanHidden"); } catch (e) { return null; } }
+  function since(iso) {
+    var s = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 1000));
+    return s < 60 ? s + " giây" : Math.floor(s / 60) + " phút " + (s % 60) + " giây";
+  }
+  function render(st) {
+    var running = st.running;
+    lastStart = st.started_at;
+    panel.hidden = false;
+    panel.classList.toggle("running", running);
+    panel.classList.toggle("failed", !running && !st.ok);
+    panel.setAttribute("aria-busy", running ? "true" : "false");
+    btn.disabled = running;
+    var src = NAMES[st.source] || st.source;
+    if (running) {
+      title.textContent = "Đang quét " + src + "…";
+      meta.textContent = "Đã chạy " + since(st.started_at);
+    } else {
+      title.textContent = st.message || "Hoàn tất";
+      meta.textContent = src + (st.finished_at ? " · xong lúc " + new Date(st.finished_at).toLocaleTimeString("vi-VN") : "");
+    }
+    foot.hidden = running; hide.hidden = running;
+    stats.innerHTML = "";
+    var sm = st.summary || {};
+    if (!running && sm.inserted !== undefined) {
+      chip("new", "+" + sm.inserted + " việc mới");
+      chip("upd", sm.updated + " cập nhật");
+      if (sm.details) chip("jd", sm.details + " bổ sung JD");
+      chip(sm.errors ? "err" : "ok", sm.errors ? sm.errors + " lỗi" : "Không lỗi");
+    }
+    if (st.log.length < shown) { list.innerHTML = ""; shown = 0; }
+    for (; shown < st.log.length; shown++) {
+      var e = st.log[shown], li = document.createElement("li");
+      var t = document.createElement("time"), msg = document.createElement("span");
+      li.className = "lv-" + e.level; t.textContent = e.t; msg.className = "msg";
+      highlight(msg, e.msg);
+      li.appendChild(t); li.appendChild(msg);
+      list.appendChild(li);
+    }
+    list.scrollTop = list.scrollHeight;
+  }
+  function poll() {
+    fetch("/api/rescan/status", { credentials: "same-origin" })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (st) {
+        if (!st || !st.started_at) return;
+        if (st.running || hiddenFor() !== st.started_at) render(st);
+        clearTimeout(timer);
+        if (st.running) timer = setTimeout(poll, 1500);
+      })
+      .catch(function () { clearTimeout(timer); timer = setTimeout(poll, 4000); });
+  }
+  form.addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    list.innerHTML = ""; shown = 0;
+    render({ running: true, source: form.source.value, started_at: new Date().toISOString(), log: [], ok: true });
+    fetch(form.action, { method: "POST", body: new FormData(form), credentials: "same-origin" })
+      .then(poll, poll);
+  });
+  hide.addEventListener("click", function () {
+    panel.hidden = true;
+    try { localStorage.setItem("scanHidden", lastStart); } catch (e) {}
+  });
+  poll();
+})();
+</script>
 {% if items %}
   {% for j in items %}{{ ticket(j) }}{% endfor %}
   {% if pages > 1 %}

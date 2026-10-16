@@ -1,7 +1,7 @@
 {# Macro dùng chung giữa các trang. Import: {% from "_macros.html" import icon, ticket %} #}
 
 {% macro icon(name) -%}
-<svg class="i" aria-hidden="true"><use href="/static/icons.svg#i-{{ name }}"/></svg>
+<svg class="i" aria-hidden="true"><use href="/static/icons.svg?v={{ asset_v('icons.svg') }}#i-{{ name }}"/></svg>
 {%- endmacro %}
 
 {# Thẻ việc dạng "vé": thân bên trái, cuống lương hồng bên phải (search + saved) #}

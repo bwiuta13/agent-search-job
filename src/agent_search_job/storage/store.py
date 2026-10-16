@@ -451,10 +451,20 @@ class JobStore:
             "SELECT source v, COUNT(*) c FROM jobs WHERE is_active=1 GROUP BY source ORDER BY c DESC"
         ):
             out["sources"].append({"value": row["v"], "count": row["c"]})
+        # job_level là chuỗi comma ("junior,middle") -> TÁCH thành từng cấp chuẩn,
+        # đếm job match mỗi cấp (dropdown chỉ hiện 7 option cố định, không hiện giá trị gộp)
+        level_counts: dict[str, int] = {}
         for row in self.conn.execute(
-            "SELECT job_level v, COUNT(*) c FROM jobs WHERE is_active=1 AND job_level != '' GROUP BY job_level ORDER BY c DESC"
+            "SELECT job_level v, COUNT(*) c FROM jobs WHERE is_active=1 AND job_level != '' GROUP BY job_level"
         ):
-            out["job_levels"].append({"value": row["v"], "count": row["c"]})
+            for lv in str(row["v"]).split(","):
+                lv = lv.strip()
+                if lv:
+                    level_counts[lv] = level_counts.get(lv, 0) + row["c"]
+        order = ["intern", "fresher", "junior", "middle", "senior", "lead", "manager"]
+        for lv in order:
+            if lv in level_counts:
+                out["job_levels"].append({"value": lv, "count": level_counts[lv]})
         for row in self.conn.execute(
             """SELECT company_name v, COUNT(*) c FROM jobs
                WHERE is_active=1 AND company_name != '' AND is_hcm=1

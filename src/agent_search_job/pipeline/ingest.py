@@ -186,6 +186,12 @@ class IngestPipeline:
         for adapter in self.adapters:
             health_tasks.append(adapter.health_check())
         result.health = await asyncio.gather(*health_tasks)
+        for h in result.health:
+            if h.ok:
+                log.info("%s: kết nối OK%s", h.source,
+                         f" ({h.latency_ms} ms)" if h.latency_ms else "")
+            else:
+                log.warning("%s: health check lỗi — %s", h.source, h.error)
 
         for adapter in self.adapters:
             for q in queries:
@@ -199,9 +205,11 @@ class IngestPipeline:
                         got += 1
                         if got >= max_results_per_query:
                             break
+                    log.info("%s · %r: %d job", adapter.name, q, got)
                 except Exception as e:  # noqa: BLE001 - adapter lỗi thì log, bỏ qua
                     msg = f"{adapter.name}: {type(e).__name__}: {e}"
-                    log.warning("Adapter error: %s", msg)
+                    log.warning("%s · %r lỗi — %s: %s", adapter.name, q,
+                                type(e).__name__, str(e)[:200])
                     result.errors.append(msg)
         result.discovered = len(raw_jobs)
 
@@ -242,6 +250,9 @@ class IngestPipeline:
                 jid = self.store.insert_job(job)
                 seen_keys[key] = jid
                 result.inserted += 1
+        log.info("Lọc: %d job tìm thấy, %d ngoài phạm vi nghề, %d ngoài TP.HCM, "
+                 "%d trùng → +%d mới, %d cập nhật", result.discovered, result.out_of_scope,
+                 result.out_of_hcm, result.duplicates_skipped, result.inserted, result.updated)
         # mark inactive: job quá hạn deadline
         self.store.mark_expired_inactive()
         result.finished_at = utcnow()

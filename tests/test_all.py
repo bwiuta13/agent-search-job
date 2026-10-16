@@ -525,6 +525,44 @@ class TestWebAPI:
         assert client.get("/search").status_code == 401
         appmod._store = None
 
+    def test_rescan_topcv_streams_log_and_errors(self, monkeypatch):
+        import logging
+        import time
+        import agent_search_job.pipeline.ingest as ingest
+        from agent_search_job.pipeline.rescan import RescanManager
+        client = self._client()
+        RescanManager._current = RescanManager._task = None
+        seen = {}
+
+        async def fake_run(self, queries=None, max_results_per_query=50):
+            seen["adapters"] = [a.name for a in self.adapters]
+            logging.getLogger("pipeline").info("topcv · 'marketing': 3 job")
+            logging.getLogger("pipeline").warning("topcv · 'content' lỗi — TimeoutError: chậm")
+            return ingest.CrawlRunResult(inserted=2, updated=1, errors=["topcv: TimeoutError"])
+        monkeypatch.setattr(ingest.IngestPipeline, "run", fake_run)
+
+        r = client.post("/rescan", data={"source": "topcv", "query": "marketing"},
+                        follow_redirects=False)
+        assert r.status_code == 303
+        for _ in range(100):
+            st = client.get("/api/rescan/status").json()
+            if not st["running"]:
+                break
+            time.sleep(0.02)
+        assert seen["adapters"] == ["topcv"]
+        assert st["running"] is False and st["ok"] is False and st["finished_at"]
+        assert st["message"] == "Hoàn tất: +2 việc mới, 1 cập nhật, 1 lỗi"
+        assert st["summary"] == {"discovered": 0, "inserted": 2, "updated": 1,
+                                 "details": 0, "errors": 1}
+        msgs = [(e["level"], e["msg"]) for e in st["log"]]
+        assert ("info", "topcv · 'marketing': 3 job") in msgs
+        assert ("warning", "topcv · 'content' lỗi — TimeoutError: chậm") in msgs
+        assert msgs[0][1].startswith("Bắt đầu quét nguồn topcv")
+        # trang search có nguồn TopCV + khung log
+        html = client.get("/search").text
+        assert '<option value="topcv">TopCV</option>' in html and 'id="scan-log"' in html
+        RescanManager._current = RescanManager._task = None
+
     def test_noindex_header(self):
         client = self._client()
         r = client.get("/search?q=content")
@@ -875,8 +913,9 @@ class TestVietnamWorksLinkedInJD:
         from agent_search_job.sources.detail_fetchers import fetch_detail
         jd = "<p><strong>1. Sản xuất nội dung</strong></p><p>• Lên ý tưởng</p>"
         req = "<p>Kỹ năng viết tốt</p>"
+        # dòng T dính liền nhau (text trước kết thúc bằng chữ/số), không có \n
         flat = ('1:{"job":{"jobDescription":"$27","jobRequirement":"$28"}}\n'
-                f"<p>x</p>27:T{len(jd.encode()):x},{jd}28:T{len(req.encode()):x},{req}"
+                f"2a:T7,mediavn27:T{len(jd.encode()):x},{jd}28:T{len(req.encode()):x},{req}"
                 '29:{"other":1}')
         page = "".join("<script>self.__next_f.push([1," + json.dumps(flat[i:i + 30]) + "])</script>"
                        for i in range(0, len(flat), 30))

@@ -17,12 +17,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 from dataclasses import dataclass, field
 from html import unescape
 from typing import Optional
 
 import httpx
+
+log = logging.getLogger(__name__)
 
 UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
@@ -136,6 +139,24 @@ class VietnamWorksDetailFetcher:
                 r'self\.__next_f\.push\(\[1,(".*?")\]\)</script>', resp.text, re.S))
         except json.JSONDecodeError:
             return None
+        # JD dài được tách thành dòng text riêng "<id>:T<số byte hex>,<html>" (không có
+        # \n kết thúc, dính liền dòng trước) và field chỉ giữ tham chiếu "$<id>" ->
+        # đọc tuần tự từng dòng để lấy đúng các dòng T
+        texts: dict[str, str] = {}
+        raw, pos = flat.encode(), 0
+        try:
+            while pos < len(raw):
+                colon = raw.index(b":", pos)
+                if raw[colon + 1:colon + 2] == b"T":
+                    comma = raw.index(b",", colon)
+                    end = comma + 1 + int(raw[colon + 2:comma], 16)
+                    texts[raw[pos:colon].decode()] = raw[comma + 1:end].decode("utf-8", "ignore")
+                    pos = end
+                else:
+                    nl = raw.find(b"\n", colon)
+                    pos = len(raw) if nl < 0 else nl + 1
+        except ValueError:
+            pass  # payload lạ -> dùng những dòng T đã đọc được
         found = {}
         for key in ("jobDescription", "jobRequirement"):
             i = flat.find(f'"{key}":"')
@@ -145,13 +166,9 @@ class VietnamWorksDetailFetcher:
                 value, _ = json.JSONDecoder().raw_decode(flat, i + len(key) + 3)
             except json.JSONDecodeError:
                 continue
-            # JD dài được tách thành dòng text riêng "<id>:T<số byte hex>,<html>"
-            # và field chỉ giữ tham chiếu "$<id>"
             ref = re.fullmatch(r"\$([0-9a-f]+)", value) if isinstance(value, str) else None
             if ref:
-                row = re.search(rf"(?<![0-9a-zA-Z]){ref.group(1)}:T([0-9a-f]+),", flat)
-                value = (flat[row.end():].encode()[:int(row.group(1), 16)]
-                         .decode("utf-8", "ignore") if row else "")
+                value = texts.get(ref.group(1), "")
             found[key] = _strip(value) if isinstance(value, str) else ""
         d = JobDetail(description=found.get("jobDescription", ""),
                       requirements=found.get("jobRequirement", ""))
@@ -166,6 +183,8 @@ class LinkedInDetailFetcher:
             resp = await client.get(url)
             if resp.status_code != 429:
                 break
+            log.warning("LinkedIn 429 (bị giới hạn tốc độ) %s — chờ %ds rồi thử lại",
+                        url.rsplit("/", 1)[-1], 10 * (attempt + 1))
             await asyncio.sleep(10 * (attempt + 1))
         # bị đẩy sang authwall/login thì không còn là trang job
         if resp.status_code != 200 or "/jobs/view/" not in str(resp.url):

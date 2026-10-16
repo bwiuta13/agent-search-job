@@ -90,6 +90,8 @@ def _jd_blocks(text: Optional[str]) -> list[dict]:
 
 
 templates.env.filters["jd_blocks"] = _jd_blocks
+# ?v=<mtime> cho file static: sửa CSS/icon là trình duyệt tải bản mới, không dính cache cũ
+templates.env.globals["asset_v"] = lambda name: int((STATIC_DIR / name).stat().st_mtime)
 
 _store: Optional[JobStore] = None
 _mcp: Optional[MCPServer] = None
@@ -486,7 +488,8 @@ async def rescan_status(user: dict = Depends(current_user)):
     st = RescanManager.status()
     return {
         "running": st.running, "source": st.source,
-        "started_at": st.started_at, "message": st.message,
+        "started_at": st.started_at, "finished_at": st.finished_at,
+        "message": st.message, "ok": st.ok, "log": st.log, "summary": st.summary,
     }
 
 
