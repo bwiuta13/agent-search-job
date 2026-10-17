@@ -1,6 +1,6 @@
 # Kế hoạch triển khai MCP và website tìm việc
 
-**Mục tiêu:** triển khai được một website và remote MCP invite-only cho một nhóm bạn tìm việc Content Marketing/truyền thông đa phương tiện tại TP.HCM, với TopCV là nguồn ưu tiên.
+**Mục tiêu:** triển khai được một website và remote MCP invite-only cho một nhóm bạn tìm việc Content / Social Media / Marketing / Truyền thông tại TP.HCM (role list người dùng), với TopCV là nguồn ưu tiên.
 
 ## 1. Các giả định đã chốt
 
@@ -112,7 +112,7 @@ Private beta kỹ thuật: khoảng **5-7 tuần**.
 
 **Nghiệm thu**
 
-- Search `content tiktok`, `video editor`, `truyền thông đa phương tiện` trả kết quả liên quan tại TP.HCM.
+- Search `content tiktok`, `brand marketing`, `truyền thông` trả kết quả liên quan tại TP.HCM.
 - Kết quả ngoài TP.HCM và job expired bị loại.
 - Largest Contentful Paint mục tiêu dưới 2.5 giây ở percentile 75 trên production-like environment.
 - Không có lỗi accessibility nghiêm trọng trong automated audit và keyboard smoke test.

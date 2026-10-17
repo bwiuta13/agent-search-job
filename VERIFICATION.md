@@ -247,3 +247,56 @@ junior=71, middle=55, senior=42, manager=30, lead=20, intern=11, fresher=1
 
 ### 87/87 tests pass (+5: executive=junior VN, senior thắng executive,
 union với số năm, mid=0 không hạ cấp, search match-any)
+
+
+## 13. Re-scope theo role list người dùng (17/10/2026)
+
+### Role list mới (user xác nhận)
+- social media, content creator, content marketing, communication, content executive,
+  social media marketing, marketing executive, social content, brand marketing,
+  content writer, copywriter, creative
+- BỎ: video editor / graphic design / multimedia thuần; THÊM: marketing executive,
+  brand marketing (trước bị coi là marketing tổng quát, không ưu tiên)
+
+### Taxonomy
+- RoleCluster: bỏ `video_production` + `multimedia_design`; thêm `brand_marketing`;
+  giữ content_marketing (nay gồm marketing executive/social content), copywriter_seo,
+  social_media, communications_pr, creative_production (hấp thụ video content)
+- `classify_role`: keyword dài trọng số cao hơn (1.0 + 0.5/số từ); cluster đặc hiệu
+  (brand_marketing) đứng trước content_marketing trong ROLE_CLUSTER_KEYWORDS ->
+  'Brand Marketing Executive' -> brand_marketing (không rơi vào 'marketing executive')
+
+### Scope filter: `in_role_scope` (thay `in_multimedia_scope`, giữ alias)
+- Gate title video/design thuần chạy TRƯỚC title hints: 'Senior Video Editor',
+  'Video Editor – Commercial & Content', 'Graphic Designer', 'Nhân viên dựng phim'
+  -> OUT (role list không có); giữ khi title có role thật
+  ('Marketing Executive – Content & Graphic Design', 'Content Creator - dựng video TikTok')
+- 'marketing'/'brand marketing' + chức danh nghề (executive/specialist/manager/lead/
+  officer/associate/strategist/coordinator/chuyên viên/nhân viên) -> IN
+  (chặn sau exclude: 'Performance Marketing Specialist' vẫn OUT)
+- TikTok/fanpage chỉ còn là hint ở title (bỏ khỏi boundary hints trong description
+  — 'Video Editor' + desc 'dựng video tiktok' phải OUT)
+- Giữ nguyên: exclude telesales/sales/tư vấn/kế toán/HR, word boundary
+  (Representative/designed/xây dựng), title-priority
+  ('Trưởng Nhóm Bán Hàng Mảng Video Và Truyền Thông' -> IN)
+
+### Rescope DB live (scripts/rescope.py, backup data/backups/jobs-20261017-*.db)
+- ẨN 11 job ngoài scope mới (6 video_production, 2 multimedia_design, 3 lệch khác)
+- Reclassify 43 job sang taxonomy mới
+- Sau rescope: 178 active — content_marketing 76, social_media 38,
+  creative_production 22, communications_pr 20, copywriter_seo 12, brand_marketing 10;
+  video_production/multimedia_design còn 0
+
+### DEFAULT_QUERIES mới
+- content, content creator, social media, copywriter, content marketing,
+  marketing executive, brand marketing, truyền thông, creative
+- (bỏ 'video editor', 'graphic design')
+
+### Sync toàn hệ thống
+- nl_query SYSTEM_PARSE + rule_parse (brand/thương hiệu -> brand_marketing;
+  marketing/content -> content_marketing; bỏ video/dựng/design/thiết kế)
+- llm_enrich SYSTEM_SCORE: nhóm mục tiêu = Content/Social/Brand Marketing/Truyền thông
+- MCP tool descriptions, rescan queries (+social media), web rescan default
+  ('content marketing'), search placeholder ('brand marketing'), itviec fallback slug
+
+### 97/97 tests pass (+1 brand_marketing classify, đổi kỳ vọng scope/queries/filters)

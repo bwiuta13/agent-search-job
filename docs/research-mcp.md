@@ -36,14 +36,14 @@ Tên tool có tiền tố `vn_jobs_` để tránh trùng khi client kết nối 
 
 ### `vn_jobs_search_jobs`
 
-Tìm các công việc thuộc Content Marketing và truyền thông đa phương tiện tại TP.HCM.
+Tìm các công việc thuộc nhóm Content / Social Media / Marketing / Truyền thông tại TP.HCM (theo role list người dùng: content marketing, content creator, copywriter, social media, marketing executive, brand marketing, creative...).
 
 Input chính:
 
 | Trường | Kiểu | Ghi chú |
 |---|---|---|
-| `query` | string, optional | Từ khóa tự do như `content tiktok`, `video editor` |
-| `role_clusters` | enum[] | `content_marketing`, `social_media`, `communications_pr`, `video_production`, `multimedia_design`, `creative_production` |
+| `query` | string, optional | Từ khóa tự do như `content tiktok`, `brand marketing` |
+| `role_clusters` | enum[] | `content_marketing`, `copywriter_seo`, `social_media`, `communications_pr`, `brand_marketing`, `creative_production` |
 | `districts` | string[] | Chấp nhận tên quận/huyện cũ và phường/xã mới |
 | `salary_min_vnd` | integer, optional | Lương tối thiểu mong muốn |
 | `experience_max_years` | number, optional | Số năm kinh nghiệm tối đa |

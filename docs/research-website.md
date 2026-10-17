@@ -2,7 +2,7 @@
 
 **Ngày kiểm chứng:** 15/10/2026  
 **Thị trường:** Việt Nam, chỉ TP.HCM  
-**Nhóm việc:** Content Marketing và truyền thông đa phương tiện  
+**Nhóm việc:** Content / Social Media / Marketing / Truyền thông (role list người dùng)  
 **Nguồn chính mong muốn:** TopCV
 
 ## 1. Sản phẩm nên giải quyết gì
@@ -116,17 +116,19 @@ interface JobSourceAdapter {
 }
 ```
 
-## 6. Taxonomy cho Content Marketing và multimedia
+## 6. Taxonomy cho Content / Social Media / Marketing / Truyền thông
 
-### Role clusters
+### Role clusters (theo role list người dùng cần tìm)
 
-- Content Marketing / Content Executive / Content Specialist
+- Content Marketing / Content Executive / Marketing Executive / Social Content
 - Copywriter / SEO Content / Content Writer
-- Social Media / Community / TikTok Content
-- Marketing Communications / PR / Corporate Communications
-- Video Editor / Videographer / Video Content Producer
-- Multimedia Designer / Motion Graphic
-- Creative Producer / Content Creator / Script Writer
+- Social Media / Social Media Marketing / Community / TikTok
+- Marketing Communications / PR / Corporate Communications / Communication
+- Brand Marketing / Brand Executive
+- Creative / Content Creator / Sáng tạo nội dung
+
+(Lưu ý: video editor / graphic design / multimedia thuần KHÔNG thuộc role list —
+scope filter loại ra; job dựng video chỉ giữ khi là content creator/social/creative)
 
 ### Trường chuyên môn cần trích xuất
 

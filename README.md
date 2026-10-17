@@ -180,11 +180,11 @@ export OPENAI_REQUEST_TIMEOUT_SECONDS=90
 python scripts/llm_enrich.py --db data/jobs.db --limit 50
 ```
 
-Sau khi enrich: search sort theo `llm_relevance` (job đúng nhóm Content/Multimedia TP.HCM đứng đầu), badge "phù hợp X%" kèm lý do, field khó (`content_types`, `on_camera_required`, `agency_or_inhouse`, KPI...) lưu trong cache bảng `llm_enrichment`.
+Sau khi enrich: search sort theo `llm_relevance` (job đúng nhóm Content/Social/Brand Marketing TP.HCM đứng đầu), badge "phù hợp X%" kèm lý do, field khó (`content_types`, `on_camera_required`, `agency_or_inhouse`, KPI...) lưu trong cache bảng `llm_enrichment`.
 
-## Phạm vi: chỉ Truyền thông đa phương tiện
+## Phạm vi: role list người dùng cần tìm
 
-Pipeline **chỉ lấy và lưu job thuộc Truyền thông đa phương tiện** (content, social media, video, design đồ họa, PR, creative, copywriter/SEO). Job marketing thuần ngoài phạm vi (telesales, kinh doanh/sales, performance marketing, event, kế toán, HR...) bị lọc bỏ ngay trong ingest (`in_multimedia_scope`) — kể cả khi nguồn trả về.
+Pipeline **chỉ lấy và lưu job thuộc role list**: social media, content creator, content marketing, communication, content executive, marketing executive, brand marketing, social content, content writer, copywriter, creative. Job ngoài phạm vi bị lọc bỏ ngay trong ingest (`in_role_scope`): telesales/kinh doanh/sales, performance/field/event marketing, kế toán, HR... và cả **video editor / graphic design / multimedia thuần** (role list không có) — job dựng video chỉ giữ khi title là content creator/social/creative thật.
 
 ## Tìm theo cấp bậc + công ty + quét lại nguồn
 

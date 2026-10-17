@@ -260,7 +260,7 @@ class IngestPipeline:
                 result.errors.append(f"normalize: {job.title}: {e}")
         before_scope = len(raw_jobs)
         raw_jobs = [j for j in raw_jobs
-                    if in_multimedia_scope(j.title, j.description or "")]
+                    if in_role_scope(j.title, j.description or "")]
         result.out_of_scope = before_scope - len(raw_jobs)
 
         # 3) HARD REQUIREMENT: TP.HCM - loại job không xác định được ở HCM
