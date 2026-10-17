@@ -16,8 +16,7 @@ class RoleCluster(str, Enum):
     COPYWRITER_SEO = "copywriter_seo"
     SOCIAL_MEDIA = "social_media"
     COMMUNICATIONS_PR = "communications_pr"
-    VIDEO_PRODUCTION = "video_production"
-    MULTIMEDIA_DESIGN = "multimedia_design"
+    BRAND_MARKETING = "brand_marketing"
     CREATIVE_PRODUCTION = "creative_production"
 
 
@@ -64,17 +63,26 @@ ROLE_CLUSTER_LABELS_VI: dict[str, str] = {
     RoleCluster.COPYWRITER_SEO.value: "Copywriter / SEO Content",
     RoleCluster.SOCIAL_MEDIA.value: "Social Media / Community",
     RoleCluster.COMMUNICATIONS_PR.value: "Truyền thông / PR",
-    RoleCluster.VIDEO_PRODUCTION.value: "Video / Biên tập video",
-    RoleCluster.MULTIMEDIA_DESIGN.value: "Thiết kế đa phương tiện",
+    RoleCluster.BRAND_MARKETING.value: "Brand Marketing",
     RoleCluster.CREATIVE_PRODUCTION.value: "Sản xuất sáng tạo / Content Creator",
 }
 
 # Từ khóa (vi + en, lowercase) ánh xạ sang role cluster dùng cho rule classifier.
+# Thứ tự: cluster ĐẶC HIỆU trước, cluster generic (content_marketing) sau —
+# hòa điểm thì cluster đặc hiệu thắng (vd 'Brand Marketing Executive' ->
+# brand_marketing, không rơi vào 'marketing executive' generic).
 ROLE_CLUSTER_KEYWORDS: dict[str, list[str]] = {
+    RoleCluster.BRAND_MARKETING.value: [
+        "brand marketing", "brand manager", "brand executive",
+        "brand specialist", "chăm sóc thương hiệu", "thương hiệu",
+        "brand strategist", "branding",
+    ],
     RoleCluster.CONTENT_MARKETING.value: [
         "content marketing", "content executive", "content specialist",
         "chuyên viên content", "nội dung marketing", "content lead",
         "content manager", "content strategist", "growth content",
+        "marketing executive", "marketing specialist", "social content",
+        "chuyên viên marketing", "marketing online",
     ],
     RoleCluster.COPYWRITER_SEO.value: [
         "copywriter", "copy writer", "seo content", "content writer",
@@ -84,27 +92,17 @@ ROLE_CLUSTER_KEYWORDS: dict[str, list[str]] = {
     RoleCluster.SOCIAL_MEDIA.value: [
         "social media", "community manager", "community", "tiktok",
         "fanpage", "facebook ads", "social executive", "social specialist",
-        "seeding", "kols", "influencer",
+        "seeding", "kols", "influencer", "social media marketing",
     ],
     RoleCluster.COMMUNICATIONS_PR.value: [
         "truyền thông", "pr ", "press", "communications", "communication",
         "pr specialist", "public relations", "hoạt động báo chí",
         "marcom", "marketing communications", "công chúng",
     ],
-    RoleCluster.VIDEO_PRODUCTION.value: [
-        "video editor", "video content", "videographer", "editor video",
-        "dựng video", "biên tập video", "video producer", "short video",
-        "post production", "motion",
-    ],
-    RoleCluster.MULTIMEDIA_DESIGN.value: [
-        "multimedia", "designer", "thiết kế", "graphic design",
-        "đồ họa", "motion graphic", "visual", "canva", "photoshop",
-        "illustrator", "ui content",
-    ],
     RoleCluster.CREATIVE_PRODUCTION.value: [
         "creative", "content creator", "script writer", "biên kịch",
         "content producer", "sáng tạo nội dung", "creative producer",
-        "storyboard",
+        "storyboard", "video content", "creative executive",
     ],
 }
 

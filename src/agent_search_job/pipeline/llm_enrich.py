@@ -41,11 +41,12 @@ Giá trị hợp lệ:
 Suy nghĩ ngắn gọn rồi trả lời JSON ngay ở dòng cuối."""
 
 SYSTEM_SCORE = """Bạn chấm điểm độ phù hợp của tin tuyển dụng với nhóm mục tiêu:
-ứng viên Content Marketing / truyền thông đa phương tiện tại TP.HCM (TikTok, video, social, SEO, PR).
+ứng viên Content / Social Media / Brand Marketing / Truyền thông tại TP.HCM
+(content marketing, content creator, copywriter, social media, marketing executive, brand marketing, creative).
 Trả JSON đúng: {"relevance": <0.0-1.0>, "reason": "<một câu ngắn tiếng Việt>"}
-- 1.0: đúng nhóm content/multimedia, làm tại TP.HCM
+- 1.0: đúng nhóm role trên (content/social/marketing/comms/creative), làm tại TP.HCM
 - 0.5: có liên quan marketing/content nhưng lệch nhóm chính hoặc thiếu địa điểm
-- 0.0: hoàn toàn lệch (telesales, kế toán, IT thuần...)
+- 0.0: hoàn toàn lệch (telesales, kế toán, IT thuần, thuần video editor/thiết kế đồ họa...)
 Suy nghĩ ngắn gọn rồi trả lời JSON ngay ở dòng cuối."""
 
 

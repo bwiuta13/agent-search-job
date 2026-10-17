@@ -30,7 +30,7 @@ SEARCH_INPUT_SCHEMA = {
     "type": "object",
     "properties": {
         "query": {"type": "string", "maxLength": 200,
-                  "description": "Từ khóa tự do, vd 'content tiktok', 'video editor'"},
+                  "description": "Từ khóa tự do, vd 'content tiktok', 'brand marketing'"},
         "role_clusters": {"type": "array", "items": {"type": "string",
                                                      "enum": VALID_ROLE_CLUSTERS}},
         "districts": {"type": "array", "items": {"type": "string"},
@@ -160,7 +160,8 @@ TOOLS = [
     {
         "name": "vn_jobs_search_jobs",
         "description": (
-            "Tìm việc làm Content Marketing / truyền thông đa phương tiện tại TP.HCM. "
+            "Tìm việc làm Content / Social Media / Marketing / Truyền thông tại TP.HCM "
+            "(content marketing, content creator, copywriter, marketing executive, brand marketing, creative). "
             "Dữ liệu đã chuẩn hóa kèm lương VND, khu vực, hạn nộp và nguồn."
         ),
         "inputSchema": SEARCH_INPUT_SCHEMA,

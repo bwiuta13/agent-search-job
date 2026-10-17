@@ -112,9 +112,19 @@ class TestRoleCluster:
         c, conf = classify_role("Content Marketing Executive")
         assert c == RoleCluster.CONTENT_MARKETING.value and conf >= 0.5
 
-    def test_video(self):
-        c, _ = classify_role("Video Editor - Dựng video TikTok")
-        assert c == RoleCluster.VIDEO_PRODUCTION.value
+    def test_video_content_creator(self):
+        # 'Video Editor' thuần giờ NGOÀI scope; job dựng video chỉ vào scope
+        # khi là content creator (keyword 'creator'/'content')
+        c, _ = classify_role("Content Creator - Sáng tạo nội dung")
+        assert c == RoleCluster.CREATIVE_PRODUCTION.value
+
+    def test_brand_marketing(self):
+        c, _ = classify_role("Brand Marketing Executive")
+        assert c == RoleCluster.BRAND_MARKETING.value
+
+    def test_marketing_executive(self):
+        c, _ = classify_role("Marketing Executive - FMCG")
+        assert c == RoleCluster.CONTENT_MARKETING.value
 
     def test_social(self):
         c, _ = classify_role("Social Media Specialist")
@@ -216,13 +226,13 @@ class TestStore:
     def test_filters(self):
         store = JobStore(":memory:")
         store.insert_job(normalize_job(make_job(
-            title="Video Editor", salary_text="10 - 20 triệu",
-            description="dựng video premiere",
+            title="Brand Marketing Specialist", salary_text="10 - 20 triệu",
+            description="chăm sóc thương hiệu",
         )))
         store.insert_job(normalize_job(make_job(
             title="Senior Content Marketing", salary_text="30 - 40 triệu",
         )))
-        res = store.search_jobs(role_clusters=["video_production"])
+        res = store.search_jobs(role_clusters=["brand_marketing"])
         assert res["total_estimate"] == 1
         res = store.search_jobs(salary_min_vnd=30_000_000)
         assert res["total_estimate"] == 1
@@ -855,7 +865,7 @@ class TestNLQuery:
         nq.httpx.AsyncClient = Boom
         try:
             parser = nq.NLQueryParser(LLMConfig(api_key="k"))
-            parsed = await parser.parse("việc video editor")
+            parsed = await parser.parse("việc brand marketing")
             assert not parsed.llm_used
             assert "fallback" in parsed.note
         finally:
@@ -1215,23 +1225,37 @@ class TestSmartSearch:
 # ---------------------------------------------------------------------------
 
 class TestMultimediaScope:
-    def test_scope_filters_marketing_pure_jobs(self):
-        from agent_search_job.pipeline.ingest import in_multimedia_scope
-        assert in_multimedia_scope("Content Marketing Specialist", "viết nội dung")
-        assert in_multimedia_scope("Video Editor", "dựng video")
-        assert in_multimedia_scope("Graphic Designer", "")
-        assert in_multimedia_scope("Trưởng Nhóm Bán Hàng Mảng Video Và Truyền Thông", "")
-        assert in_multimedia_scope("Marketing & Communication Specialist", "")
-        assert not in_multimedia_scope("Telesales", "gọi bán hàng")
-        assert not in_multimedia_scope("Nhân Viên Bán Hàng", "")
-        assert not in_multimedia_scope("Kế toán", "")
-        assert not in_multimedia_scope("Performance Marketing Specialist", "chạy ads")
-        assert not in_multimedia_scope("Event Executive", "tổ chức sự kiện")
+    def test_scope_matches_user_role_list(self):
+        from agent_search_job.pipeline.ingest import in_role_scope
+        assert in_role_scope("Content Marketing Specialist", "viết nội dung")
+        assert in_role_scope("Social Media Executive", "")
+        assert in_role_scope("Marketing Executive", "triển khai chiến dịch")
+        assert in_role_scope("Brand Marketing Specialist", "chăm sóc thương hiệu")
+        assert in_role_scope("Marketing & Communication Specialist", "")
+        assert in_role_scope("Trưởng Nhóm Bán Hàng Mảng Video Và Truyền Thông", "")
+        assert in_role_scope("Content Creator - dựng video TikTok", "")
+        assert not in_role_scope("Telesales", "gọi bán hàng")
+        assert not in_role_scope("Nhân Viên Bán Hàng", "")
+        assert not in_role_scope("Kế toán", "")
+        assert not in_role_scope("Performance Marketing Specialist", "chạy ads")
+        assert not in_role_scope("Event Executive", "tổ chức sự kiện")
 
-    def test_default_queries_only_multimedia(self):
+    def test_video_editor_and_design_now_out_of_scope(self):
+        from agent_search_job.pipeline.ingest import in_role_scope
+        # role list người dùng KHÔNG có video editor / graphic design thuần
+        assert not in_role_scope("Video Editor", "dựng video")
+        assert not in_role_scope("Video Editor", "dựng video tiktok")
+        assert not in_role_scope("Graphic Designer", "")
+        assert not in_role_scope("Nhân viên dựng phim", "montage")
+
+    def test_default_queries_match_role_list(self):
         from agent_search_job.pipeline.ingest import DEFAULT_QUERIES
         assert "content" in DEFAULT_QUERIES
-        assert "video editor" in DEFAULT_QUERIES
+        assert "content marketing" in DEFAULT_QUERIES
+        assert "marketing executive" in DEFAULT_QUERIES
+        assert "brand marketing" in DEFAULT_QUERIES
+        assert "video editor" not in DEFAULT_QUERIES
+        assert "graphic design" not in DEFAULT_QUERIES
         assert "digital marketing" not in DEFAULT_QUERIES
 
     def test_pipeline_marks_out_of_scope(self):
@@ -1401,14 +1425,14 @@ class TestVNGCareers:
             "https://career.vng.com.vn/tim-kiem-viec-lam/chi-tiet/6922-creative"]
 
     def test_scope_boundary_no_false_positive(self):
-        from agent_search_job.pipeline.ingest import in_multimedia_scope
+        from agent_search_job.pipeline.ingest import in_role_scope
         # 'pr' trong 'Representative' không được tính là PR
-        assert not in_multimedia_scope(
+        assert not in_role_scope(
             "Business Development Representative, Instantia",
             "this role is designed as a pathway")
         # 'design' trong 'designed' không được tính
-        assert not in_multimedia_scope("Fintech Analyst", "system designed for trading")
-        assert in_multimedia_scope("PR Executive", "truyền thông")
+        assert not in_role_scope("Fintech Analyst", "system designed for trading")
+        assert in_role_scope("PR Executive", "truyền thông")
 
 
 # ---------------------------------------------------------------------------
@@ -1467,16 +1491,17 @@ class TestHCMHardRequirement:
         assert store.get_job(jid)["is_active"] == 1
 
     def test_scope_no_design_verb_false_positive(self):
-        from agent_search_job.pipeline.ingest import in_multimedia_scope
+        from agent_search_job.pipeline.ingest import in_role_scope
         # 'to design and operate' (động từ) không phải nghề design
-        assert not in_multimedia_scope(
+        assert not in_role_scope(
             "AI Engineer, Zalopay",
             "We are hiring an AI Engineer to design and operate production-grade AI/ML systems")
         # 'xây dựng' không phải 'dựng video'
-        assert not in_multimedia_scope(
+        assert not in_role_scope(
             "DevOps Engineer", "xây dựng và vận hành các giải pháp AI")
-        assert in_multimedia_scope("Video Editor", "dựng video tiktok")
-        assert in_multimedia_scope("Nhân viên dựng phim", "montage")
+        # video editor thuần giờ NGOÀI scope (role list không có)
+        assert not in_role_scope("Video Editor", "dựng video tiktok")
+        assert not in_role_scope("Nhân viên dựng phim", "montage")
 
 
 # ---------------------------------------------------------------------------

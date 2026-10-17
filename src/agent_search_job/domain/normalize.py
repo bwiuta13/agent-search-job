@@ -191,10 +191,12 @@ def classify_role(title: str, description: str = "") -> tuple[str, float]:
     for cluster, kws in ROLE_CLUSTER_KEYWORDS.items():
         s = 0.0
         for kw in kws:
+            # keyword càng dài (nhiều từ) càng đặc trưng cho role -> trọng số cao
+            w = 1.0 + 0.5 * (len(kw.split()) - 1)
             if kw in t:
-                s += 2.0
+                s += 2.0 * w
             elif kw in d:
-                s += 0.5
+                s += 0.5 * w
         if s > 0:
             scores[cluster] = s
     if not scores:

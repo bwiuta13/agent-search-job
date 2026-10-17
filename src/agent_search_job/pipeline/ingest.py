@@ -19,20 +19,23 @@ from ..storage.store import JobStore
 
 log = logging.getLogger("pipeline")
 
-# Query seeds - CHỈ Truyền thông đa phương tiện (content, social, video, design, PR, creative)
+# Query seeds - role list người dùng cần tìm (content/social/marketing/comms/
+# copywriter/creative). KHÔNG còn "video editor"/"graphic design" thuần.
 DEFAULT_QUERIES = [
     "content",
     "content creator",
     "social media",
     "copywriter",
-    "video editor",
-    "graphic design",
+    "content marketing",
+    "marketing executive",
+    "brand marketing",
     "truyền thông",
     "creative",
 ]
 
-# Job ngoài phạm vi Truyền thông đa phương tiện -> bỏ, không lưu (kể cả khi nguồn trả về)
-# marketing tổng quát: performance/telesales/event/field marketing, sales, hành chính...
+# Job ngoài phạm vi role list -> bỏ, không lưu (kể cả khi nguồn trả về):
+# sales/telesales/tư vấn/performance/field/event marketing, HR, kế toán...
+# 'video editor'/'graphic design' thuần cũng KHÔNG còn trong scope.
 EXCLUDE_PATTERNS = [
     r"(?i)\btelesales?\b", r"(?i)\bbán hàng\b", r"(?i)\bsales?\b(?!\s*content)",
     r"(?i)\btư vấn", r"(?i)\bnhân viên kinh doanh\b",
@@ -42,60 +45,77 @@ EXCLUDE_PATTERNS = [
     r"(?i)\badmin\b",
 ]
 
-# Bắt buộc: title/description phải có ít nhất 1 dấu hiệu Truyền thông đa phương tiện
+# Bắt buộc: title/description phải có ít nhất 1 dấu hiệu role list người dùng
+# (content, social, marketing executive/brand, comms, copywriter, creative)
 INCLUDE_HINTS = [
     "content", "nội dung", "social", "truyền thông", "media", "pr ", "comms",
-    "copywriter", "seo", "video", "dựng", "editor", "design", "thiết kế",
-    "đồ họa", "graphic", "creative", "sáng tạo", "multimedia", "brand",
+    "copywriter", "seo", "creative", "sáng tạo", "brand", "thương hiệu",
     "campaign", "chiến dịch", "kịch", "storyboard", "tiktok", "fanpage",
-    "photographer", "chụp ảnh", "marcom", "editorial", "writer", "viết",
-    "livestream", "live stream", "host", "mc ", "blogger", "podcast",
+    "marcom", "editorial", "writer", "viết", "livestream", "blogger",
+    "podcast", "marketing executive", "marketing specialist",
+    "marketing online", "social content", "content creator",
 ]
 
 
-def in_multimedia_scope(title: str, description: str = "") -> bool:
-    """True nếu job thuộc Truyền thông đa phương tiện; False với job marketing thuần khác.
+def in_role_scope(title: str, description: str = "") -> bool:
+    """True nếu job thuộc role list người dùng cần tìm (social media, content
+    creator, content marketing, communication, marketing executive, brand
+    marketing, content writer, copywriter, creative).
 
-    Ưu tiên: nếu TITLE có dấu hiệu truyền thông rõ (content/social/video/design...)
-    -> thuộc phạm vi dù có từ 'bán hàng' trong ngữ cảnh (vd 'Trưởng nhóm BH mảng video').
+    KHÔNG còn video editor / graphic design / multimedia thuần trong scope.
+
+    Ưu tiên: nếu TITLE có dấu hiệu role rõ (content/social/brand/comms...)
+    -> thuộc phạm vi dù JD có từ ngữ bán hàng trong ngữ cảnh
+    (vd 'Trưởng nhóm BH mảng video truyền thông' -> 'truyền thông' trong title).
     """
     import re
     t = (title or "").lower()
     text = f"{t} {(description or '')[:400]}".lower()
-    # dấu hiệu truyền thông xuất hiện trong TITLE -> giữ (word boundary để
+    # dấu hiệu role xuất hiện trong TITLE -> giữ (word boundary để
     # 'pr' trong 'Representative' không tính)
-    import re as _re2
     title_hints = [
         "content", "nội dung", "social", "truyền thông", "media", "copywriter",
-        "seo", "video", "dựng", "editor", "design", "thiết kế", "đồ họa",
-        "graphic", "creative", "sáng tạo", "multimedia", "pr", "comms",
-        "communication", "livestream", "host", "kịch", "photographer",
-        "chụp ảnh", "marcom", "brand", "writer", "viết", "creator",
+        "seo", "creative", "sáng tạo", "pr", "comms", "communication",
+        "marcom", "brand", "thương hiệu", "writer", "viết", "creator",
+        "tiktok", "fanpage",
     ]
     for h in title_hints:
-        if _re2.search(r"(?<![a-zà-ỹ])" + _re2.escape(h) + r"(?![a-zà-ỹ])", t):
+        if re.search(r"(?<![a-zà-ỹ])" + re.escape(h) + r"(?![a-zà-ỹ])", t):
             return True
     for pat in EXCLUDE_PATTERNS:
         if re.search(pat, text[:300]):
             return False
     # hint cần ranh giới từ để tránh false positive ('designed' chứa 'design')
-    import re as _re
     boundary_hints = [
         "content", "nội dung", "social", "truyền thông", "media", "comms",
-        "copywriter", "seo", "video", "thiết kế", "đồ họa",
-        "graphic", "creative", "sáng tạo", "multimedia", "brand",
-        "campaign", "chiến dịch", "kịch", "storyboard", "tiktok", "fanpage",
-        "photographer", "chụp ảnh", "marcom", "editorial", "viết",
-        "livestream", "live stream", "blogger", "podcast", "host", "mc",
+        "copywriter", "seo", "creative", "sáng tạo", "brand", "thương hiệu",
+        "campaign", "chiến dịch", "kịch", "storyboard", "marcom",
+        "editorial", "viết", "livestream", "live stream",
+        "blogger", "podcast", "host",
     ]
     for h in boundary_hints:
-        if _re.search(r"(?<![a-zà-ỹ])" + _re.escape(h) + r"(?![a-zà-ỹ])", text):
+        if re.search(r"(?<![a-zà-ỹ])" + re.escape(h) + r"(?![a-zà-ỹ])", text):
             return True
-    # 'dựng' chỉ là nghề khi đi cùng video/film/phim (tránh 'xây dựng')
-    if _re.search(r"dựng\s*(video|phim|film)|((video|phim|film)[^,.]{0,15}dựng)", text):
+    # 'marketing'/'brand marketing' là role khi là CHỨC DANH nghề
+    # (executive/specialist/manager/lead/...), không phải mảng bán hàng.
+    # Performance/field marketing đã bị exclude chặn ở trên.
+    if re.search(
+        r"(?:marketing|brand marketing)[^,.]{0,25}"
+        r"(?:executive|specialist|manager|lead|officer|associate|"
+        r"strategist|coordinator|chuyên viên|nhân viên)",
+        text,
+    ):
         return True
+    # 'dựng'/'video'/'design' thuần KHÔNG còn là hint riêng — video editor
+    # thuần giờ ngoài scope; job dựng video chỉ còn vào scope khi là
+    # content creator/social (đã match ở title/boundary hints trên).
+    # 'xây dựng' không bao giờ đếm.
     # hint dạng cụm có sẵn (trailing space giữ ngữ cảnh): 'pr ', 'mc '
     return any(h in text for h in ("pr ", "mc "))
+
+
+# Backward-compat: tên cũ (tests/CLI cũ vẫn import được)
+in_multimedia_scope = in_role_scope
 
 
 @dataclass
@@ -217,7 +237,7 @@ class IngestPipeline:
                     result.errors.append(msg)
         result.discovered = len(raw_jobs)
 
-        # 2) normalize + lọc phạm vi: chỉ giữ job Truyền thông đa phương tiện
+        # 2) normalize + lọc phạm vi: chỉ giữ job thuộc role list người dùng
         for job in raw_jobs:
             try:
                 normalize_job(job)

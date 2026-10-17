@@ -1,7 +1,7 @@
 """ITviec adapter - parse HTML server-rendered (đã verify 15/10/2026).
 
 curl thường đọc được (200 OK). Job listing /it-jobs/<kw>/ho-chi-minh-hcm.
-ITviec thiên về IT nhưng có job digital marketing/multimedia đáng lấy.
+ITviec thiên về IT nhưng có job content/digital marketing đáng lấy.
 Company review: /companies/<slug> có aggregate rating public.
 """
 from __future__ import annotations
@@ -29,7 +29,7 @@ class ITviecAdapter(JobSourceAdapter):
 
     async def discover(self, input: DiscoverInput) -> AsyncIterator[NormalizedJob]:
         slug = re.sub(r"[^a-z0-9\s-]", "", input.query.lower()).strip().replace(" ", "-")
-        url = f"{self.base}/it-jobs/{slug or 'digital-marketing'}/ho-chi-minh-hcm"
+        url = f"{self.base}/it-jobs/{slug or 'content-marketing'}/ho-chi-minh-hcm"
         async with httpx.AsyncClient(
             timeout=self.timeout, headers={"User-Agent": UA}, follow_redirects=True
         ) as client:

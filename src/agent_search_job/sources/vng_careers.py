@@ -6,7 +6,7 @@ fetch thêm trang /tim-kiem-viec-lam/chi-tiet/{slug}: job_data.description + req
 là HTML đầy đủ (verify 16/10/2026).
 - Job HCM: location == "Thành phố Hồ Chí Minh"
 - job_family: Marketing/Creative... -> dùng làm hint phân loại
-- Lọc phía ingest: chỉ giữ job thuộc Truyền thông đa phương tiện (scope filter chung).
+- Lọc phía ingest: chỉ giữ job thuộc role list người dùng (scope filter chung).
 
 Công ty lớn khác (FPT): fpt.com.vn + fpt-software.com đều chặn Cloudflare (403)
 hoặc 404 - không có endpoint công khai; bỏ qua, ghi nhận trong docs.

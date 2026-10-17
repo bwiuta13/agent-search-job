@@ -130,8 +130,9 @@ async def _run_rescan(store: JobStore, source: str, query: str,
             from ..sources.topcv import TopCVAdapter
             adapters.append(TopCVAdapter())
         pipeline = IngestPipeline(store, adapters)
-        result = await pipeline.run(queries=list(dict.fromkeys([query, "content", "marketing"])),
-                                    max_results_per_query=max_results)
+        result = await pipeline.run(queries=list(dict.fromkeys(
+            [query, "content", "social media", "marketing"])),
+            max_results_per_query=max_results)
         n = 0
         if with_details:
             n = await enrich_job_details(store, source)

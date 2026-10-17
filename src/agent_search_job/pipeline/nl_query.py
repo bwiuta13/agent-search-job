@@ -34,7 +34,7 @@ Chỉ trả JSON đúng schema, không thêm chữ nào:
  "job_levels": [], "company_query": null,
  "salary_min_vnd": null, "work_modes": [], "posted_within_days": 14, "portfolio_required": null, "source": "all"}
 Quy tắc:
-- role_clusters chỉ nhận: content_marketing, copywriter_seo, social_media, communications_pr, video_production, multimedia_design, creative_production
+- role_clusters chỉ nhận: content_marketing, copywriter_seo, social_media, communications_pr, brand_marketing, creative_production
 - job_levels chỉ nhận: intern, fresher, junior, middle, senior, lead, manager. "thực tập"=intern; "chưa có kinh nghiệm/fresher"=fresher; "junior/1-2 năm"=junior; "middle/2-4 năm"=middle; "senior/4+ năm"=senior; "trưởng nhóm"=lead; "trưởng phòng/quản lý"=manager
 - company_query: tên công ty nếu câu nhắc rõ ("việc ở FPT", "công ty Jamu")
 - work_modes chỉ nhận: onsite, hybrid, remote. "làm từ xa"=remote; "linh hoạt/kết hợp"=hybrid
@@ -43,7 +43,7 @@ Quy tắc:
 - posted_within_days: "mới đăng hôm qua"=1, "tuần này"=7, "2 tuần"=14, "tháng này"=30 (tối đa 60)
 - portfolio_required: true nếu câu nhắc "portfolio/hồ sơ năng lực"
 - source: "topcv" nếu câu nói rõ chỉ TopCV, "all" mặc định
-- query: từ khóa còn lại (vd "content tiktok", "video editor", "seo") — bỏ hết số lương/quận/từ chỉ thời gian
+- query: từ khóa còn lại (vd "content tiktok", "brand marketing", "seo") — bỏ hết số lương/quận/từ chỉ thời gian
 Suy nghĩ ngắn rồi trả JSON ở dòng cuối."""
 
 
@@ -77,10 +77,11 @@ def rule_parse(text: str) -> SearchFilters:
     low = text.lower()
     role_map = {
         "tiktok": "social_media", "social": "social_media",
-        "video": "video_production", "dựng": "video_production",
+        "brand": "brand_marketing", "thương hiệu": "brand_marketing",
         "seo": "copywriter_seo", "copywriter": "copywriter_seo",
         "pr": "communications_pr", "truyền thông": "communications_pr",
-        "design": "multimedia_design", "thiết kế": "multimedia_design",
+        "marketing": "content_marketing", "content": "content_marketing",
+        "creative": "creative_production",
     }
     roles = {v for k, v in role_map.items() if k in low}
     if roles:

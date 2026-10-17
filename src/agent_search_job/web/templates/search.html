@@ -8,7 +8,7 @@
   <form class="filters" method="get" action="/search">
     <label class="field q">
       {{ icon('search') }}
-      <input type="search" name="q" value="{{ q }}" placeholder="Ví dụ: content tiktok, video editor, SEO..." aria-label="Từ khóa">
+      <input type="search" name="q" value="{{ q }}" placeholder="Ví dụ: content tiktok, brand marketing, SEO..." aria-label="Từ khóa">
     </label>
     <button class="btn go" type="submit">{{ icon('search') }}Tìm việc</button>
     <select name="role" aria-label="Nhóm nghề">
@@ -78,7 +78,7 @@
         <option value="topdev">TopDev</option>
         <option value="vng">VNG Careers</option>
       </select>
-      <input type="search" name="query" value="marketing" placeholder="Từ khóa quét" aria-label="Từ khóa quét">
+      <input type="search" name="query" value="content marketing" placeholder="Từ khóa quét" aria-label="Từ khóa quét">
       <input type="number" name="max_results" value="15" min="1" max="50" aria-label="Số kết quả tối đa mỗi nguồn" style="max-width:120px">
       <button class="btn go" type="submit">{{ icon('refresh') }}Quét ngay</button>
     </form>

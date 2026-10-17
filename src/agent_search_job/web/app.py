@@ -474,7 +474,7 @@ async def rescan(request: Request, user: dict = Depends(current_user)):
     if source not in ("all", "vietnamworks", "itviec", "careerviet", "linkedin",
                       "topdev", "topcv", "vng"):
         source = "all"
-    query = str(form.get("query") or "marketing").strip()[:100]
+    query = str(form.get("query") or "content marketing").strip()[:100]
     try:
         max_results = max(1, min(50, int(form.get("max_results") or 15)))
     except (TypeError, ValueError):
