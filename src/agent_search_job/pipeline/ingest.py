@@ -71,6 +71,20 @@ def in_role_scope(title: str, description: str = "") -> bool:
     import re
     t = (title or "").lower()
     text = f"{t} {(description or '')[:400]}".lower()
+    # Title là video editor / thiết kế đồ họa thuần -> NGOÀI scope (role list
+    # không có), KIỂM TRA TRƯỚC title hints vì vd 'Video Editor – Commercial
+    # & Content' có chữ 'content' nhưng vẫn là job dựng video thuần.
+    # Chỉ giữ nếu title còn nhắc role thật (marketing/creator/social/brand/
+    # creative/truyền thông...) ở phần khác của title.
+    if re.search(
+        r"video\s*editor|editor\s*video|biên\s*tập\s*video|dựng\s*video|"
+        r"videographer|compositor|motion\s*graph|graphic\s*design|"
+        r"thiết\s*kế\s*đồ\s*họa|đồ\s*họa|multimedia|\bdesigner\b", t,
+    ) and not re.search(
+        r"creator|sáng\s*tạo|creative|marketing|social|brand|thương\s*hiệu|"
+        r"truyền\s*thông|communication|copywriter|biên\s*kịch|content\s*marketing", t,
+    ):
+        return False
     # dấu hiệu role xuất hiện trong TITLE -> giữ (word boundary để
     # 'pr' trong 'Representative' không tính)
     title_hints = [
