@@ -1,0 +1,200 @@
+// Three.js stage cho /assistant — 1 canvas toàn màn hình, 1 renderer, vẽ từng scene vào vùng
+// của #orb-slot và #avatar-slot bằng scissor (threejs.org/manual "Multiple Canvases, Multiple Scenes").
+// Nhân vật 3D sau này: stage.setCharacter("/static/assistant/character.glb") (GLB có clip "idle").
+// Muốn VRM: vendor @pixiv/three-vrm, thêm vào importmap, đăng ký VRMLoaderPlugin trong GLTFLoader
+// và gọi vrm.update(dt) mỗi frame (biểu cảm aa/ih/ou/ee/oh dùng cho lip-sync).
+import * as THREE from "three";
+import WebGL from "three/addons/capabilities/WebGL.js";
+import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
+import { mergeVertices } from "three/addons/utils/BufferGeometryUtils.js";
+
+const STATES = {
+  idle: { scale: 1, noise: 0, hue: 0.03, pulse: 0.02 },
+  thinking: { scale: 0.96, noise: 0.06, hue: 0.35, pulse: 0.01 },
+  speaking: { scale: 1.04, noise: 0.02, hue: 0.08, pulse: 0.05 },
+};
+const VERT = `
+varying vec3 vPos; varying vec3 vNormal; varying vec3 vView;
+void main() {
+  vPos = position;
+  vNormal = normalize(normalMatrix * normal);
+  vec4 mv = modelViewMatrix * vec4(position, 1.0);
+  vView = normalize(-mv.xyz);
+  gl_Position = projectionMatrix * mv;
+}`;
+// lõi màu hồng -> tím -> xanh ngọc như ảnh mẫu; vỏ kính khúc xạ lõi này
+const CORE_FRAG = `
+uniform float uHue; varying vec3 vPos; varying vec3 vNormal; varying vec3 vView;
+void main() {
+  float y = clamp(vPos.y * 0.55 + 0.5, 0.0, 1.0);
+  vec3 pink = vec3(0.96, 0.43, 0.76), lilac = vec3(0.88, 0.64, 0.98), cyan = vec3(0.37, 0.86, 0.84);
+  vec3 col = y > 0.45 ? mix(lilac, pink, (y - 0.45) / 0.55) : mix(cyan, lilac, y / 0.45);
+  col += pow(1.0 - max(dot(vNormal, vView), 0.0), 2.0) * 0.25;
+  // xoay màu quanh trục xám (Rodrigues) theo trạng thái
+  const vec3 k = vec3(0.57735);
+  float ca = cos(uHue);
+  col = col * ca + cross(k, col) * sin(uHue) + k * dot(k, col) * (1.0 - ca);
+  gl_FragColor = vec4(col, 1.0);
+  #include <colorspace_fragment>
+}`;
+// vỏ rẻ cho máy yếu: viền fresnel hồng/xanh + điểm sáng, trong suốt
+// (màu không nhân thêm f: alpha blending đã nhân alpha rồi, nhân nữa thì viền bị xám trên nền sáng)
+const SHELL_FRAG = `
+varying vec3 vPos; varying vec3 vNormal; varying vec3 vView;
+void main() {
+  float f = pow(1.0 - max(dot(vNormal, vView), 0.0), 2.5);
+  vec3 rim = mix(vec3(1.0, 0.55, 0.8), vec3(0.45, 0.95, 0.95), 0.5 + 0.5 * vNormal.y);
+  float spec = pow(max(dot(reflect(-vView, vNormal), normalize(vec3(-0.4, 0.6, 0.7))), 0.0), 40.0);
+  gl_FragColor = vec4(mix(rim, vec3(1.0), spec), clamp(f * 0.9 + spec, 0.0, 1.0));
+  #include <colorspace_fragment>
+}`;
+
+export function createStage(canvas, { orbSlot, avatarSlot }) {
+  if (!WebGL.isWebGL2Available()) return null;
+  const lowTier = matchMedia("(pointer: coarse)").matches || (navigator.hardwareConcurrency || 8) <= 4;
+  const reduced = matchMedia("(prefers-reduced-motion: reduce)");
+  const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, lowTier ? 1.5 : 2));
+  renderer.setClearColor(0x000000, 0);
+  renderer.setSize(canvas.clientWidth, canvas.clientHeight, false);
+  renderer.transmissionResolutionScale = 0.5; // transmission vẽ lại scene vào buffer phụ -> giảm độ phân giải
+
+  // --- Orb: lõi màu (đục) + vỏ kính ---
+  const orbScene = new THREE.Scene();
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  const env = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+  pmrem.dispose();
+  orbScene.environment = env;
+  orbScene.environmentIntensity = 1.3; // r186: material.envMapIntensity bị bỏ qua khi dùng scene.environment
+  const orbCam = new THREE.PerspectiveCamera(30, 1, 0.1, 50);
+  orbCam.position.set(0, 0, 4.6);
+  const coreGeo = new THREE.SphereGeometry(0.8, 64, 32);
+  const coreMat = new THREE.ShaderMaterial({ uniforms: { uHue: { value: 0 } }, vertexShader: VERT, fragmentShader: CORE_FRAG });
+  const core = new THREE.Mesh(coreGeo, coreMat);
+  // Icosahedron là geometry không index -> computeVertexNormals() cho pháp tuyến phẳng từng mặt (điểm sáng bị lốm đốm khi vỏ biến dạng).
+  // Bỏ uv (khác nhau ở đường nối) rồi gộp đỉnh trùng để có pháp tuyến mượt; số đỉnh cũng giảm ~6 lần cho vòng lặp nhiễu mỗi frame.
+  const shellSrc = new THREE.IcosahedronGeometry(1, lowTier ? 12 : 24);
+  shellSrc.deleteAttribute("uv");
+  const shellGeo = mergeVertices(shellSrc);
+  const basePos = shellGeo.attributes.position.array.slice();
+  const shellMat = lowTier
+    ? new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: SHELL_FRAG, transparent: true, depthWrite: false })
+    : new THREE.MeshPhysicalMaterial({
+      color: 0xffffff, transmission: 1, thickness: 0.35, ior: 1.45, roughness: 0.04,
+      iridescence: 1, iridescenceIOR: 1.3, iridescenceThicknessRange: [100, 800],
+      clearcoat: 1, clearcoatRoughness: 0.04, attenuationColor: new THREE.Color(0xf7a8c8),
+      attenuationDistance: 2.5,
+    });
+  const shell = new THREE.Mesh(shellGeo, shellMat);
+  const orb = new THREE.Group();
+  orb.add(core, shell);
+  orbScene.add(orb);
+
+  // --- Ô nhân vật: scene có camera + đèn, hiện trống tới khi setCharacter() ---
+  const avatarScene = new THREE.Scene();
+  avatarScene.add(new THREE.HemisphereLight(0xffffff, 0xf7b7cb, 1.6));
+  const sun = new THREE.DirectionalLight(0xffffff, 1.8);
+  sun.position.set(1, 2, 3);
+  avatarScene.add(sun);
+  const avatarCam = new THREE.PerspectiveCamera(30, 1, 0.1, 50);
+  avatarCam.position.set(0, 1.3, 3.2);
+  avatarCam.lookAt(0, 1, 0);
+  let character = null, mixer = null;
+
+  const cur = { ...STATES.idle };
+  let target = STATES.idle, hue = 0;
+  const timer = new THREE.Timer();
+  timer.connect(document);
+  const views = [[orbSlot, orbScene, orbCam], [avatarSlot, avatarScene, avatarCam]];
+
+  const frame = () => {
+    timer.update();
+    const dt = Math.min(timer.getDelta(), 0.1), t = timer.getElapsed();
+    const still = reduced.matches; // giảm chuyển động: chỉ đổi màu theo trạng thái
+    for (const k of ["scale", "noise", "pulse", "hue"]) cur[k] = still ? target[k] : THREE.MathUtils.damp(cur[k], target[k], 4, dt);
+    hue = still ? target.hue * 2 : hue + cur.hue * dt;
+    coreMat.uniforms.uHue.value = Math.sin(hue) * 0.35;
+    orb.scale.setScalar(cur.scale * (1 + (still ? 0 : cur.pulse * Math.sin(t * 2.4))));
+    orb.rotation.y += still ? 0 : dt * 0.15;
+    if (!still && cur.noise > 0.002) {
+      // biến dạng vỏ khi "đang nghĩ": dời đỉnh theo nhiễu sin theo pháp tuyến
+      const p = shellGeo.attributes.position.array;
+      for (let i = 0; i < p.length; i += 3) {
+        const x = basePos[i], y = basePos[i + 1], z = basePos[i + 2];
+        const n = 1 + cur.noise * Math.sin(x * 3 + t * 2) * Math.sin(y * 3 + t * 2.6) * Math.sin(z * 3 + t * 1.4);
+        p[i] = x * n; p[i + 1] = y * n; p[i + 2] = z * n;
+      }
+      shellGeo.attributes.position.needsUpdate = true;
+      shellGeo.computeVertexNormals();
+    }
+    mixer?.update(dt);
+    const h = canvas.clientHeight;
+    renderer.setScissorTest(false);
+    renderer.clear();
+    renderer.setScissorTest(true);
+    for (const [slot, scene, cam] of views) {
+      const r = slot.getBoundingClientRect();
+      if (r.width < 2 || r.height < 2 || (scene === avatarScene && !character)) continue;
+      cam.aspect = r.width / r.height;
+      cam.updateProjectionMatrix();
+      renderer.setViewport(r.left, h - r.bottom, r.width, r.height);
+      renderer.setScissor(r.left, h - r.bottom, r.width, r.height);
+      renderer.render(scene, cam);
+    }
+  };
+  const play = () => renderer.setAnimationLoop(document.hidden || reduced.matches ? null : frame);
+  // Quan sát cả 2 ô: orb co lại khi bắt đầu chat (CSS transition 0.4s, hoặc đổi tức thì khi giảm chuyển động -> không có
+  // transitionend) và ô nhân vật ẩn/hiện theo breakpoint; ở chế độ giảm chuyển động không có vòng lặp nên phải vẽ lại tại đây.
+  // setSize xoá canvas -> vẽ ngay sau đó để không trống 1 nhịp (ResizeObserver chạy sau rAF).
+  const ro = new ResizeObserver((entries) => {
+    const resized = entries.some((e) => e.target === canvas);
+    if (resized) renderer.setSize(canvas.clientWidth, canvas.clientHeight, false);
+    if (resized || reduced.matches) frame();
+  });
+  for (const node of [canvas, orbSlot, avatarSlot]) ro.observe(node);
+  const ac = new AbortController(); // gỡ mọi listener một lượt trong dispose()
+  document.addEventListener("visibilitychange", play, { signal: ac.signal });
+  reduced.addEventListener("change", () => { play(); frame(); }, { signal: ac.signal });
+  canvas.addEventListener("webglcontextlost", () => {
+    renderer.setAnimationLoop(null);
+    document.body.classList.remove("webgl-on"); // hiện lại orb CSS (env PMREM mất theo context nên không dựng lại)
+    canvas.hidden = true; // canvas mất context bị Chrome vẽ thành ô trắng đục phủ cả trang ở lần repaint kế tiếp
+  }, { signal: ac.signal });
+
+  async function setCharacter(url) {
+    const { GLTFLoader } = await import("three/addons/loaders/GLTFLoader.js");
+    const gltf = await new GLTFLoader().loadAsync(url);
+    if (character) avatarScene.remove(character);
+    mixer?.stopAllAction();
+    character = gltf.scene;
+    avatarScene.add(character);
+    const idle = gltf.animations.find((a) => /idle/i.test(a.name)) || gltf.animations[0];
+    mixer = idle ? new THREE.AnimationMixer(character) : null;
+    mixer?.clipAction(idle).play();
+    document.body.classList.add("has-character");
+    if (reduced.matches) frame();
+  }
+
+  function dispose() {
+    renderer.setAnimationLoop(null);
+    ro.disconnect();
+    ac.abort();
+    timer.dispose();
+    for (const o of [coreGeo, coreMat, shellGeo, shellMat, env]) o.dispose();
+    renderer.dispose();
+    canvas.hidden = true; // canvas còn giữ frame cuối -> ẩn đi để orb CSS không bị vẽ đè
+    document.body.classList.remove("webgl-on", "has-character");
+  }
+
+  document.body.classList.add("webgl-on");
+  play();
+  frame();
+  return {
+    setState(state) {
+      target = STATES[state] || STATES.idle;
+      if (reduced.matches) frame();
+    },
+    setCharacter,
+    dispose,
+  };
+}
