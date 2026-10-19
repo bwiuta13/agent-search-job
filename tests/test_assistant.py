@@ -14,7 +14,7 @@ from datetime import timedelta
 import pytest
 from fastapi.testclient import TestClient
 
-from agent_search_job.domain.models import NormalizedJob, utcnow
+from agent_search_job.domain.models import Company, CompanyFeedback, NormalizedJob, utcnow
 from agent_search_job.domain.normalize import normalize_job
 
 
@@ -418,10 +418,21 @@ class TestChat:
         assert ev[-1][0] == "done"
 
     def test_deep_think_uses_more_rounds_and_tokens(self, app, monkeypatch):
+        import agent_search_job.assistant.agent as agent
+        monkeypatch.setattr(agent, "MAX_ROUNDS", 1)
+        monkeypatch.setattr(agent, "MAX_ROUNDS_DEEP", 2)
         client = login(app)
+        fake = fake_llm(monkeypatch, [sse(tool_call("search_jobs", {"query": "a"}, "c1")),
+                                      sse(tool_call("search_jobs", {"query": "b"}, "c2")),
+                                      sse({"content": "ok"})])
+        ev = events(client.post("/api/assistant/chat", json={"message": "x", "deep_think": True}))
+        assert [r["max_tokens"] for r in fake.requests] == [6000, 6000, 6000]
+        # 2 vòng có tool (MAX_ROUNDS_DEEP) rồi mới tới lượt bắt buộc trả lời; không deep chỉ có 1 vòng
+        assert ["tools" in r for r in fake.requests] == [True, True, False]
+        assert ev[-1][0] == "done"
         fake = fake_llm(monkeypatch, [sse({"content": "ok"})])
-        client.post("/api/assistant/chat", json={"message": "x", "deep_think": True})
-        assert fake.requests[0]["max_tokens"] == 6000
+        client.post("/api/assistant/chat", json={"message": "x"})
+        assert fake.requests[0]["max_tokens"] == 3000
 
     def test_llm_not_configured(self, app, monkeypatch):
         monkeypatch.delenv("OPENAI_API_KEY")
@@ -456,3 +467,148 @@ class TestChat:
         assert client.post("/api/assistant/chat", json={"message": "1"}).status_code == 200
         r = client.post("/api/assistant/chat", json={"message": "2"})
         assert r.status_code == 429 and "mai mình nói tiếp" in r.json()["detail"]
+
+    @pytest.mark.parametrize("n, desc_cap, req_cap", [(1, 3000, 1500), (2, 1800, 900), (3, 1200, 600)])
+    def test_get_jobs_scales_caps_by_jd_count_and_stays_valid_json(self, app, monkeypatch, n, desc_cap, req_cap):
+        client = login(app)
+        ids = [add_job(app, title=f"Content Writer {i}", source_job_id=str(i),
+                       description="Mô tả dài " * 500, requirements="Yêu cầu " * 300) for i in range(n)]
+        fake = fake_llm(monkeypatch, [sse(tool_call("get_jobs", {"job_ids": ids})), sse({"content": "ok"})])
+        client.post("/api/assistant/chat", json={"message": "so sánh JD"})
+        out = json.loads(fake.requests[1]["messages"][-1]["content"])  # không bị cắt giữa JSON
+        assert [j["job_id"] for j in out["jobs"]] == ids
+        assert all(len(j["description"]) == desc_cap and len(j["requirements"]) == req_cap for j in out["jobs"])
+        assert all("jd_analysis" in j for j in out["jobs"])
+
+    def test_oversized_tool_result_is_cut_with_visible_marker(self, app, monkeypatch):
+        import agent_search_job.assistant.agent as agent
+        monkeypatch.setattr(agent, "TOOL_RESULT_MAX_CHARS", 200)
+        client = login(app)
+        add_job(app)
+        fake = fake_llm(monkeypatch, [sse(tool_call("search_jobs", {"query": "content"})),
+                                      sse({"content": "ok"})])
+        client.post("/api/assistant/chat", json={"message": "x"})
+        content = fake.requests[1]["messages"][-1]["content"]
+        assert content.endswith(" …[đã cắt bớt vì quá dài]") and len(content) == 200 + len(" …[đã cắt bớt vì quá dài]")
+
+    def test_arguments_split_across_chunks_are_joined(self, app, monkeypatch):
+        client = login(app)
+        jid = add_job(app)
+        fake = fake_llm(monkeypatch, [
+            sse({"tool_calls": [{"index": 0, "id": "call_a", "type": "function",
+                                 "function": {"name": "search_jobs", "arguments": ""}}]},
+                {"tool_calls": [{"index": 0, "function": {"arguments": '{"query": "con'}}]},
+                {"tool_calls": [{"index": 0, "function": {"arguments": 'tent", "lim'}}]},
+                {"tool_calls": [{"index": 0, "function": {"arguments": 'it": 5}'}}]}),
+            sse({"content": "ok"})])
+        ev = events(client.post("/api/assistant/chat", json={"message": "x"}))
+        end = [d for e, d in ev if e == "tool_end"][0]
+        assert end["ok"] and end["jobs"][0]["job_id"] == jid
+        call = fake.requests[1]["messages"][-2]["tool_calls"][0]
+        assert call["id"] == "call_a" and call["function"]["arguments"] == '{"query": "content", "limit": 5}'
+
+    def test_parallel_tool_calls_by_index_all_run_and_reply(self, app, monkeypatch):
+        client = login(app)
+        jid = add_job(app)
+        fake = fake_llm(monkeypatch, [
+            sse({"tool_calls": [{"index": 0, "id": "call_a", "type": "function",
+                                 "function": {"name": "search_jobs", "arguments": '{"query":'}}]},
+                {"tool_calls": [{"index": 1, "id": "call_b", "type": "function",
+                                 "function": {"name": "get_jobs", "arguments": f'{{"job_ids": [{jid}]}}'}}]},
+                {"tool_calls": [{"index": 0, "function": {"arguments": ' "content"}'}}]}),
+            sse({"content": "ok"})])
+        ev = events(client.post("/api/assistant/chat", json={"message": "x"}))
+        assert [(e, d.get("call_id")) for e, d in ev if e.startswith("tool_")] == [
+            ("tool_start", "call_a"), ("tool_end", "call_a"), ("tool_start", "call_b"), ("tool_end", "call_b")]
+        assert all(d["ok"] for e, d in ev if e == "tool_end")
+        sent = fake.requests[1]["messages"]
+        assert [c["id"] for c in sent[-3]["tool_calls"]] == ["call_a", "call_b"]
+        assert [(m["role"], m["tool_call_id"]) for m in sent[-2:]] == [("tool", "call_a"), ("tool", "call_b")]
+        assert "total_estimate" in json.loads(sent[-2]["content"]) and "jobs" in json.loads(sent[-1]["content"])
+
+    def test_tool_call_delta_without_index_counts_as_index_zero(self, app, monkeypatch):
+        client = login(app)
+        jid = add_job(app)
+        fake = fake_llm(monkeypatch, [
+            sse({"tool_calls": [{"id": "call_a", "type": "function",
+                                 "function": {"name": "search_jobs", "arguments": '{"query":'}}]},
+                {"tool_calls": [{"function": {"arguments": ' "content"}'}}]}),
+            sse({"content": "ok"})])
+        ev = events(client.post("/api/assistant/chat", json={"message": "x"}))
+        end = [d for e, d in ev if e == "tool_end"][0]
+        assert end["call_id"] == "call_a" and end["ok"] and end["jobs"][0]["job_id"] == jid
+        assert len(fake.requests[1]["messages"][-2]["tool_calls"]) == 1
+
+    def test_reasoning_alias_is_echoed_back_as_reasoning_content(self, app, monkeypatch):
+        client = login(app)
+        fake = fake_llm(monkeypatch, [sse({"reasoning": "vLLM nghĩ"}, tool_call("search_jobs", {"query": "x"})),
+                                      sse({"content": "ok"})])
+        client.post("/api/assistant/chat", json={"message": "x"})
+        assert fake.requests[1]["messages"][-2]["reasoning_content"] == "vLLM nghĩ"
+
+    def test_get_company_returns_profile_and_open_jobs(self, app, monkeypatch):
+        client = login(app)
+        cid = app.get_store().upsert_company(Company(name="Công Ty TNHH ABC", industry="Marketing"))
+        jid = add_job(app)
+        fake = fake_llm(monkeypatch, [sse(tool_call("get_company", {"company_id": cid})), sse({"content": "ok"})])
+        ev = events(client.post("/api/assistant/chat", json={"message": "công ty ABC thế nào"}))
+        end = [d for e, d in ev if e == "tool_end"][0]
+        assert end["ok"] and [j["job_id"] for j in end["jobs"]] == [jid]
+        assert end["summary"] == "Công Ty TNHH ABC · 1 việc đang tuyển"
+        out = json.loads(fake.requests[1]["messages"][-1]["content"])
+        assert out["company"]["industry"] == "Marketing" and out["open_jobs"][0]["job_id"] == jid
+
+    def test_get_company_unknown_id_is_tool_error(self, app, monkeypatch):
+        client = login(app)
+        fake = fake_llm(monkeypatch, [sse(tool_call("get_company", {"company_id": 999})), sse({"content": "ok"})])
+        ev = events(client.post("/api/assistant/chat", json={"message": "x"}))
+        end = [d for e, d in ev if e == "tool_end"][0]
+        assert end["ok"] is False and end["jobs"] == [] and ev[-1][0] == "done"
+        assert "không tìm thấy công ty" in json.loads(fake.requests[1]["messages"][-1]["content"])["error"]
+
+    def test_company_feedback_keeps_only_https_sources(self, app, monkeypatch):
+        client = login(app)
+        store = app.get_store()
+        cid = store.upsert_company(Company(name="Công Ty TNHH ABC"))
+        store.save_feedback(CompanyFeedback(company_id=cid, source="reviewsite", rating=4.2, review_count=10,
+                                            source_url="https://reviews.example.com/abc"))
+        store.save_feedback(CompanyFeedback(company_id=cid, source="insecure", rating=3.0, review_count=2,
+                                            source_url="http://insecure.example.com/abc"))
+        fake_llm(monkeypatch, [sse(tool_call("get_company_feedback", {"company_id": cid})), sse({"content": "ok"})])
+        ev = events(client.post("/api/assistant/chat", json={"message": "review ABC"}))
+        end = [d for e, d in ev if e == "tool_end"][0]
+        assert end["ok"] and end["summary"] == "2 nguồn review"
+        assert end["sources"] == [{"title": "reviewsite · 4.2★ (10 review)",
+                                   "url": "https://reviews.example.com/abc", "domain": "reviews.example.com"}]
+        conv = client.get(f"/api/assistant/conversations/{ev[0][1]['id']}").json()
+        assert conv["messages"][1]["meta"]["sources"] == end["sources"]
+
+    def test_company_feedback_unavailable(self, app, monkeypatch):
+        client = login(app)
+        cid = app.get_store().upsert_company(Company(name="Công Ty TNHH ABC"))
+        fake_llm(monkeypatch, [sse(tool_call("get_company_feedback", {"company_id": cid})), sse({"content": "ok"})])
+        ev = events(client.post("/api/assistant/chat", json={"message": "review ABC"}))
+        end = [d for e, d in ev if e == "tool_end"][0]
+        assert end["ok"] and end["summary"] == "chưa có review" and end["sources"] == []
+
+    def test_unknown_tool_name_is_tool_error(self, app, monkeypatch):
+        client = login(app)
+        fake = fake_llm(monkeypatch, [sse(tool_call("do_magic", {})), sse({"content": "ok"})])
+        ev = events(client.post("/api/assistant/chat", json={"message": "x"}))
+        assert [d["ok"] for e, d in ev if e == "tool_end"] == [False]
+        assert "Không có tool do_magic" in json.loads(fake.requests[1]["messages"][-1]["content"])["error"]
+        assert ev[-1][0] == "done"
+
+    @pytest.mark.parametrize("name, raw", [
+        ("get_company", '{"company_id": 1e400}'),                    # inf -> int() OverflowError
+        ("get_company", '{"company_id": 1180591620717411303424}'),   # 2**70 -> sqlite OverflowError
+        ("search_jobs", '{"limit": Infinity}'),
+    ])
+    def test_any_tool_exception_goes_back_to_model_not_lost(self, app, monkeypatch, caplog, name, raw):
+        client = login(app)
+        fake = fake_llm(monkeypatch, [sse(tool_call(name, None, raw=raw)), sse({"content": "Em thử lại nhé"})])
+        ev = events(client.post("/api/assistant/chat", json={"message": "x"}))
+        assert [d["ok"] for e, d in ev if e == "tool_end"] == [False]
+        assert "OverflowError" in json.loads(fake.requests[1]["messages"][-1]["content"])["error"]
+        assert ev[-1][0] == "done"
+        assert f"assistant tool {name} failed" in caplog.text

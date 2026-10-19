@@ -11,6 +11,7 @@ error {code, message}. Route SSE lưu câu trả lời khi nhận final.
 from __future__ import annotations
 
 import json
+import logging
 from typing import AsyncIterator, Optional
 
 import httpx
@@ -22,6 +23,8 @@ from ..mcp.contracts import (
 from ..mcp.server import MCPServer
 from ..pipeline.llm_enrich import PROMPT_VERSION, LLMConfig
 from ..storage.store import JobStore
+
+log = logging.getLogger(__name__)
 
 MAX_ROUNDS = 6
 MAX_ROUNDS_DEEP = 10
@@ -202,6 +205,8 @@ async def run_agent(store: JobStore, owner: str, history: list[dict], message: s
                         if not isinstance(ids, list) or not 1 <= len(ids) <= 3:
                             raise ValidationError("job_ids cần 1-3 số nguyên")
                         result = {"jobs": []}
+                        # 3 JD cùng lúc phải vừa TOOL_RESULT_MAX_CHARS: chia ngân sách chữ theo số JD
+                        desc_cap, req_cap = (3000, 1800, 1200)[len(ids) - 1], (1500, 900, 600)[len(ids) - 1]
                         for jid in ids:
                             job = (await mcp._dispatch("vn_jobs_get_job", {"job_id": int(jid)}))["job"]
                             if not job:
@@ -210,8 +215,8 @@ async def run_agent(store: JobStore, owner: str, history: list[dict], message: s
                             jobs.append(_job_card(job))
                             result["jobs"].append({
                                 **_job_card(job),
-                                "description": (job.get("description") or "")[:3000],
-                                "requirements": (job.get("requirements") or "")[:1500],
+                                "description": (job.get("description") or "")[:desc_cap],
+                                "requirements": (job.get("requirements") or "")[:req_cap],
                                 "benefits": (job.get("benefits") or [])[:8],
                                 "platforms": job.get("platforms") or [],
                                 "creative_tools": job.get("creative_tools") or [],
@@ -244,9 +249,12 @@ async def run_agent(store: JobStore, owner: str, history: list[dict], message: s
                                    else f"{len(result['feedback'])} nguồn review")
                     else:
                         raise ValidationError(f"Không có tool {name}")
-                except (ValueError, TypeError, KeyError, httpx.HTTPError) as e:
+                except Exception as e:  # noqa: BLE001 - lỗi tool nào cũng trả cho model, không mất cả lượt chat
+                    log.warning("assistant tool %s failed", name, exc_info=True)
                     ok, result, summary = False, {"error": f"{type(e).__name__}: {e}"}, "lỗi"
-                tool_text = json.dumps(result, ensure_ascii=False)[:TOOL_RESULT_MAX_CHARS]
+                tool_text = json.dumps(result, ensure_ascii=False)
+                if len(tool_text) > TOOL_RESULT_MAX_CHARS:  # có dấu hiệu cắt để model biết dữ liệu chưa đủ
+                    tool_text = tool_text[:TOOL_RESULT_MAX_CHARS] + " …[đã cắt bớt vì quá dài]"
                 messages.append({"role": "tool", "tool_call_id": c["id"], "content": tool_text})
                 meta["tools"].append({"name": name, "summary": summary, "ok": ok})
                 for j in jobs:
