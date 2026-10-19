@@ -198,6 +198,15 @@ def make_docx(body: bytes, method: int = zipfile.ZIP_DEFLATED) -> bytes:
 
 
 class TestCvUpload:
+    def test_guest_cannot_upload_cv(self, public_app):
+        guest = TestClient(public_app.app, cookies={"vnjobs_guest": "g" * 32})
+        pdf = make_pdf("Kinh nghiem 3 nam content TikTok va Facebook cho my pham")
+        r = guest.post("/api/assistant/profile/cv", files={"file": ("cv.pdf", pdf, "application/pdf")})
+        assert r.status_code == 403 and "đăng nhập" in r.json()["detail"]
+        assert public_app.get_store().conn.execute("SELECT COUNT(*) FROM user_profiles").fetchone()[0] == 0
+        # khách vẫn tự gõ "Giới thiệu bản thân" được, chỉ không upload file
+        assert guest.put("/api/assistant/profile", json={"about": "3 năm content"}).status_code == 200
+
     def test_pdf_cv_is_extracted_and_original_not_kept(self, app):
         client = login(app)
         pdf = make_pdf("Kinh nghiem 3 nam content TikTok va Facebook cho my pham")
@@ -1022,7 +1031,7 @@ class TestPage:
         assert r.status_code == 200
         assert '"three": "/static/vendor/three/build/three.module.js"' in r.text
         for marker in ('id="orb-slot"', 'id="avatar-slot"', 'id="thread"', 'id="composer"',
-                       'id="deep"', 'data-guest="false"', "/static/assistant/chat.js"):
+                       'id="deep"', 'data-guest="false"', "/static/assistant/chat.js", "data-upload"):
             assert marker in r.text
         assert "Voice" not in r.text
         assert "vnjobs_guest" not in r.headers.get("set-cookie", "")
@@ -1032,6 +1041,7 @@ class TestPage:
         guest = TestClient(public_app.app)
         r = guest.get("/assistant")
         assert r.status_code == 200 and 'data-guest="true"' in r.text
+        assert "data-upload" not in r.text and "Đăng nhập để tải CV" in r.text  # khách không có nút upload CV
         assert re.search(r"vnjobs_guest=[A-Za-z0-9_-]{32}", r.headers["set-cookie"])
         assert "HttpOnly" in r.headers["set-cookie"]
         assert guest.get("/api/assistant/conversations").status_code == 200

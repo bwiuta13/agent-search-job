@@ -98,7 +98,7 @@ Quy tắc code (CLAUDE.md của user): **không tách hàm chỉ để phục v�
   - Dòng trạng thái tool: "Em đang tìm việc…" → "✓ 12 kết quả".
   - **Thẻ job** (từ `tool_end.jobs`): tiêu đề, công ty, lương, quận, cấp bậc, link `/jobs/{id}`, nút lưu (dùng `POST /api/me/saved-jobs`; ẩn với khách).
   - **Nguồn web** (từ `tool_end.sources`): danh sách link + tên miền.
-- **Composer**: textarea tự giãn; Enter gửi, Shift+Enter xuống dòng; khi đang stream nút Gửi → **Dừng** (`AbortController`); Đính kèm CV (PDF/DOCX ≤ 5MB); Deep Think là toggle (`aria-pressed`). Không có Voice.
+- **Composer**: textarea tự giãn; Enter gửi, Shift+Enter xuống dòng; khi đang stream nút Gửi → **Dừng** (`AbortController`); Đính kèm CV (PDF/DOCX ≤ 5MB; nút ẩn với khách — chỉ người đã đăng nhập upload được); Deep Think là toggle (`aria-pressed`). Không có Voice.
 - **Orb** theo trạng thái: `idle` (gửi xong/không làm gì), `thinking` (giữa `tool_start` và token đầu), `speaking` (đang nhận `token`).
 - **Mobile (< 768px)**: thanh icon thành menu trên cùng; orb nhỏ. **< 1320px** (CSS `max-width: 1319px`) ẩn avatar slot — gồm cả mobile — để không đè composer.
 - Nav các trang cũ thêm link "Trợ lý AI".
@@ -163,7 +163,7 @@ Tất cả dưới `current_user` (cookie session hoặc bearer); khách (public
 | GET | `/api/assistant/conversations/{id}` | tin nhắn + `meta` (thẻ job, nguồn) |
 | DELETE | `/api/assistant/conversations/{id}` | xoá |
 | GET / PUT / DELETE | `/api/assistant/profile` | `{about, cv_filename, cv_chars, updated_at}`; PUT `{about ≤ 4000}`; DELETE xoá cả hồ sơ |
-| POST | `/api/assistant/profile/cv` | multipart `file` (.pdf/.docx ≤ 5MB) → `{cv_filename, cv_chars, preview}`; PDF: tối đa 10 trang đầu, dừng khi đủ 20.000 ký tự, stream giải nén > 4MB (`pypdf.filters.ZLIB_MAX_OUTPUT_LENGTH`) → 400 (chặn PDF bomb; guest gọi được route này) |
+| POST | `/api/assistant/profile/cv` | multipart `file` (.pdf/.docx ≤ 5MB) → `{cv_filename, cv_chars, preview}`; PDF: tối đa 10 trang đầu, dừng khi đủ 20.000 ký tự, stream giải nén > 4MB (`pypdf.filters.ZLIB_MAX_OUTPUT_LENGTH`) → 400 (giảm rủi ro PDF bomb). **Chỉ người đã đăng nhập**: khách (`guest:*`) → 403 "Công chúa đăng nhập để tải CV lên giúp em nhé 💐" |
 
 ### Event SSE (`event: <type>\ndata: <json>\n\n`)
 
@@ -271,6 +271,7 @@ CREATE TABLE IF NOT EXISTS assistant_usage (
 | Thiếu `TAVILY_API_KEY` / Tavily lỗi | tool trả `{"status": "unavailable", "note": …}` |
 | Vượt `ASSISTANT_DAILY_MESSAGES` (100) hoặc — với khách — tổng tin nhắn của mọi khách trong ngày vượt `ASSISTANT_GUEST_DAILY_MESSAGES` (300) | HTTP 429 `{"detail": "Hôm nay công chúa hỏi em nhiều quá rồi, mai mình nói tiếp nha 💐"}` (lỗi trước khi stream, cùng dạng với mọi lỗi pre-stream ở mục 6) |
 | Vượt `ASSISTANT_DAILY_WEB_SEARCHES` (20) hoặc — với khách — tổng lượt tra web của mọi khách trong ngày vượt `ASSISTANT_GUEST_DAILY_WEB_SEARCHES` (30) | tool trả `unavailable` kèm lý do quota |
+| Khách upload CV | HTTP 403 kèm lời nhắc đăng nhập; khách vẫn gõ được phần giới thiệu |
 | CV sai loại / > 5MB / không có chữ / PDF bomb (stream giải nén > 4MB) | HTTP 400 kèm lý do tiếng Việt (Nginx chặn > `client_max_body_size` trả 413 → `chat.js` báo "File CV tối đa 5MB thôi ạ") |
 | `conversation_id` không thuộc owner | 404 |
 | `Origin` khác host | 403 |
@@ -283,7 +284,7 @@ CREATE TABLE IF NOT EXISTS assistant_usage (
 2. Hết số vòng → request cuối không có `tools`.
 3. `market_stats` qua chat (LLM giả gọi tool) → số liệu đúng với job fixture.
 4. `company_web_search`: Tavily giả; lần 2 lấy cache (không gọi HTTP); thiếu key → `unavailable`; quota web vượt → `unavailable`.
-5. Upload CV: PDF tạo trong test và DOCX tạo bằng `zipfile` (không python-docx) → `cv_chars > 0`; sai đuôi/magic, > 5MB, không có chữ → 400; DOCX zip bomb (> 10MB giải nén) → 400; bzip2/LZMA → 400; STORED → chấp nhận; thiếu `word/document.xml` → 400; PDF có stream giải nén > 4MB → 400 trong < 3 giây; PDF 12 trang chỉ lấy 10 trang đầu; dừng parse khi đủ 20.000 ký tự.
+5. Upload CV: khách → 403, không tạo hồ sơ (vẫn PUT phần giới thiệu được), trang của khách không có nút upload; PDF tạo trong test và DOCX tạo bằng `zipfile` (không python-docx) → `cv_chars > 0`; sai đuôi/magic, > 5MB, không có chữ → 400; DOCX zip bomb (> 10MB giải nén) → 400; bzip2/LZMA → 400; STORED → chấp nhận; thiếu `word/document.xml` → 400; PDF có stream giải nén > 4MB → 400 trong < 3 giây; PDF 12 trang chỉ lấy 10 trang đầu; dừng parse khi đủ 20.000 ký tự.
 6. Phân quyền: user B không đọc/xoá được hội thoại của A (404); khách nhận cookie `vnjobs_guest` và chỉ thấy hội thoại của mình.
 7. TTL: hội thoại có `updated_at` cũ hơn 24 giờ biến mất ở lần gọi API kế tiếp và khi app khởi động (lifespan); hồ sơ user đăng nhập vẫn còn, hồ sơ khách cũ bị xoá.
 8. Rate limit: vượt quota tin nhắn → 429; hai khách khác cookie cùng bị trần chung `ASSISTANT_GUEST_DAILY_MESSAGES` / `ASSISTANT_GUEST_DAILY_WEB_SEARCHES` (người đăng nhập không bị ảnh hưởng).
@@ -311,6 +312,6 @@ ASSISTANT_GUEST_DAILY_WEB_SEARCHES=30   # trần CHUNG: lượt tra web của m�
 - Prompt injection từ kết quả web/CV → bọc dữ liệu + nhắc trong system prompt + backend tự dựng query, không fetch URL do model đưa.
 - Chi phí token: mỗi câu hỏi 2–4 lượt gọi LLM (tối đa 7–11 khi Deep Think); giới hạn ngày + cắt gọn kết quả tool.
 - Khách (public mode) tự chọn cookie `vnjobs_guest` nên quota theo owner không chặn được người cố ý đổi cookie → thêm trần chung `ASSISTANT_GUEST_DAILY_*` cho toàn bộ khách (tin nhắn 300, tra web 30 mỗi ngày). Khách thật có thể bị chặn khi người khác dùng hết trần; chấp nhận để bảo vệ chi phí LLM/Tavily.
-- PDF bomb qua `/profile/cv` (khách gọi được): giới hạn giải nén 4MB mỗi stream, 10 trang, 20.000 ký tự; route sync chạy threadpool nên vẫn chiếm GIL trong lúc parse.
+- PDF bomb qua `/profile/cv`: giới hạn giải nén 4MB mỗi stream, 10 trang, 20.000 ký tự; PDF dựng sẵn (Form XObject gọi lặp, mảng `/Contents`) vẫn có thể tốn vài giây CPU và chiếm GIL trong threadpool → route chỉ mở cho người đã đăng nhập (khách 403). Muốn mở lại cho khách thì parse trong tiến trình con có timeout + giới hạn RAM.
 - Nginx mặc định (Host 127.0.0.1, body 1MB, read timeout 60 giây) làm hỏng chat/CV: bắt buộc cấu hình theo README.
 - Three.js transmission nặng trên máy yếu → shader fresnel + fallback CSS.

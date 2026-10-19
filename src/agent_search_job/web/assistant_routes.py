@@ -136,7 +136,11 @@ async def delete_profile(owner: str = Depends(chat_owner)):
 @router.post("/api/assistant/profile/cv", dependencies=[Depends(same_origin)])
 def upload_cv(file: UploadFile = File(...), owner: str = Depends(chat_owner)):
     """CV PDF/DOCX -> chỉ lưu phần chữ (≤ 20.000 ký tự) vào hồ sơ; không lưu file gốc.
-    Route sync để FastAPI chạy trong threadpool (parse không chặn event loop)."""
+    Route sync để FastAPI chạy trong threadpool (parse không chặn event loop).
+    Khách (public mode) không được upload: parse PDF vẫn tốn CPU với file dựng sẵn (Form XObject
+    gọi lặp, mảng /Contents) nên chỉ người đã đăng nhập mới tải CV; khách vẫn gõ phần giới thiệu."""
+    if owner.startswith("guest:"):
+        raise HTTPException(403, "Công chúa đăng nhập để tải CV lên giúp em nhé 💐")
     data = file.file.read(MAX_CV_BYTES + 1)
     if len(data) > MAX_CV_BYTES:
         raise HTTPException(400, "File CV tối đa 5MB thôi ạ")

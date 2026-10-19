@@ -55,7 +55,7 @@
         <label class="sr-only" for="input">Câu hỏi cho trợ lý</label>
         <textarea id="input" rows="1" maxlength="4000" placeholder="Hỏi em bất cứ điều gì về việc làm…"></textarea>
         <div class="as-tools">
-          <button type="button" class="as-tool" data-upload aria-label="Đính kèm CV">{{ icon('paperclip') }}<span>Đính kèm CV</span></button>
+          {% if not user.guest %}<button type="button" class="as-tool" data-upload aria-label="Đính kèm CV">{{ icon('paperclip') }}<span>Đính kèm CV</span></button>{% endif %}
           <button type="button" class="as-tool" id="deep" aria-pressed="false" aria-label="Deep Think">{{ icon('lightbulb') }}<span>Deep Think</span></button>
           <span class="as-flex"></span>
           <button type="submit" class="as-send" id="send">{{ icon('send') }}<span>Gửi</span></button>
@@ -75,12 +75,12 @@
   <header><h2>Hồ sơ của công chúa</h2><button type="button" data-close aria-label="Đóng">{{ icon('x') }}</button></header>
   <label for="about">Giới thiệu bản thân</label>
   <textarea id="about" rows="7" maxlength="4000" placeholder="Kinh nghiệm, kỹ năng, mức lương mong muốn, quận muốn làm…"></textarea>
-  <p id="cv-status" class="as-note">Chưa có CV.</p>
+  <p id="cv-status" class="as-note">{{ 'Đăng nhập để tải CV (PDF/DOCX) cho em tư vấn kỹ hơn nhé.' if user.guest else 'Chưa có CV.' }}</p>
   <div class="as-drawer-actions">
-    <button type="button" class="as-btn" data-upload>{{ icon('paperclip') }}Tải CV (PDF/DOCX)</button>
+    {% if not user.guest %}<button type="button" class="as-btn" data-upload>{{ icon('paperclip') }}Tải CV (PDF/DOCX)</button>{% endif %}
     <button type="button" class="as-btn primary" id="profile-save">Lưu hồ sơ</button>
     <button type="button" class="as-btn ghost" id="profile-delete">{{ icon('trash') }}Xoá hồ sơ</button>
   </div>
-  <p class="as-note">CV chỉ được lưu phần chữ để em tư vấn, không lưu file gốc.</p>
+  <p class="as-note">CV chỉ được lưu phần chữ để em tư vấn, không lưu file gốc{{ '; khách chỉ gõ được phần giới thiệu' if user.guest else '' }}.</p>
 </aside>
 {% endblock %}

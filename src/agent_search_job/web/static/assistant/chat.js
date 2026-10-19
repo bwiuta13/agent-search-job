@@ -154,8 +154,10 @@ const loadProfile = async () => {
   if (!r.ok) return;
   const p = await r.json();
   $("#about").value = p.about || "";
-  $("#cv-status").textContent = p.cv_filename ? `CV: ${p.cv_filename} (${p.cv_chars} ký tự)` : "Chưa có CV.";
-  $("#profile-chip").textContent = p.cv_filename ? "Hồ sơ: Đã có CV" : "+ Thêm CV";
+  // khách không upload được CV (server trả 403) -> nhắc đăng nhập thay vì "Thêm CV"
+  $("#cv-status").textContent = p.cv_filename ? `CV: ${p.cv_filename} (${p.cv_chars} ký tự)`
+    : guest ? "Đăng nhập để tải CV (PDF/DOCX) cho em tư vấn kỹ hơn nhé." : "Chưa có CV.";
+  $("#profile-chip").textContent = p.cv_filename ? "Hồ sơ: Đã có CV" : guest ? "Hồ sơ" : "+ Thêm CV";
 };
 
 const send = async (text) => {
