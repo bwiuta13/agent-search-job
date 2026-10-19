@@ -149,8 +149,17 @@ def upload_cv(file: UploadFile = File(...), owner: str = Depends(chat_owner)):
         raise HTTPException(400, "Em chỉ đọc được file PDF hoặc DOCX thôi ạ")
     try:
         if kind == "pdf":
-            from pypdf import PdfReader
-            text = "\n".join(p.extract_text() or "" for p in PdfReader(io.BytesIO(data)).pages)
+            from pypdf import PdfReader, filters
+            # PDF bomb (20KB inflate thành hàng trăm MB, parse hàng chục giây): stream giải nén > 4MB thì
+            # pypdf ném lỗi -> 400; chỉ đọc 10 trang đầu và dừng khi đủ 20.000 ký tự (đúng mức lưu bên dưới)
+            filters.ZLIB_MAX_OUTPUT_LENGTH = 4 * 1024 * 1024
+            pages, total = [], 0
+            for i, page in enumerate(PdfReader(io.BytesIO(data)).pages):
+                if i >= 10 or total >= 20000:
+                    break
+                pages.append(page.extract_text() or "")
+                total += len(pages[-1])
+            text = "\n".join(pages)
         else:
             with zipfile.ZipFile(io.BytesIO(data)) as z:
                 info = z.getinfo("word/document.xml")
@@ -201,7 +210,11 @@ async def assistant_chat(request: Request, owner: str = Depends(chat_owner)):
     day = now[:10]
     used = store.conn.execute("SELECT messages FROM assistant_usage WHERE owner=? AND day=?",
                               (owner, day)).fetchone()
-    if (used["messages"] if used else 0) >= int(os.environ.get("ASSISTANT_DAILY_MESSAGES") or 100):
+    if (used["messages"] if used else 0) >= int(os.environ.get("ASSISTANT_DAILY_MESSAGES") or 100) or (
+            # khách tự chọn cookie (= owner mới, quota mới) nên còn có trần chung cho mọi khách trong ngày
+            owner.startswith("guest:") and store.conn.execute(
+                "SELECT COALESCE(SUM(messages), 0) FROM assistant_usage WHERE owner LIKE 'guest:%' AND day=?",
+                (day,)).fetchone()[0] >= int(os.environ.get("ASSISTANT_GUEST_DAILY_MESSAGES") or 300)):
         raise HTTPException(429, "Hôm nay công chúa hỏi em nhiều quá rồi, mai mình nói tiếp nha 💐")
     conv_id = body.get("conversation_id")
     if conv_id is not None:
@@ -248,6 +261,9 @@ async def assistant_chat(request: Request, owner: str = Depends(chat_owner)):
                         store.conn.execute("UPDATE chat_conversations SET updated_at=? WHERE id=?",
                                            (ts, conv_id))
                     name, data = "done", {"message_id": mid}
+                elif name == "ping":  # comment SSE: giữ kết nối qua proxy, chat.js bỏ qua (không có dòng event:)
+                    yield ": ping\n\n"
+                    continue
                 yield f"event: {name}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
         except Exception:  # noqa: BLE001 - lỗi lạ không được làm treo UI đang chờ stream
             log.exception("assistant chat failed")

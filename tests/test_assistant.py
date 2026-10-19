@@ -6,9 +6,14 @@ from __future__ import annotations
 
 import copy
 import io
+import itertools
 import json
+import logging
 import re
+import time
+import types
 import zipfile
+import zlib
 from datetime import datetime, timedelta
 
 import httpx
@@ -26,7 +31,8 @@ def app(monkeypatch):
     monkeypatch.setenv("ALLOWLIST_EMAILS", "a@example.com,b@example.com")
     monkeypatch.setenv("OPENAI_API_KEY", "k")
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
-    for k in ("ASSISTANT_CHAT_TTL_HOURS", "ASSISTANT_DAILY_MESSAGES", "ASSISTANT_DAILY_WEB_SEARCHES"):
+    for k in ("ASSISTANT_CHAT_TTL_HOURS", "ASSISTANT_DAILY_MESSAGES", "ASSISTANT_DAILY_WEB_SEARCHES",
+              "ASSISTANT_GUEST_DAILY_MESSAGES", "ASSISTANT_GUEST_DAILY_WEB_SEARCHES"):
         monkeypatch.delenv(k, raising=False)
     import agent_search_job.web.app as appmod
     appmod._store = None
@@ -136,15 +142,21 @@ class TestHistoryAndProfile:
         assert r.status_code == 403
 
 
-def make_pdf(text: str) -> bytes:
-    """PDF 1 trang tối thiểu có chữ (Helvetica, ASCII) để pypdf trích được."""
-    stream = f"BT /F1 12 Tf 72 720 Td ({text}) Tj ET".encode()
+def make_pdf(*texts: str, bomb_page: int | None = None) -> bytes:
+    """PDF tối thiểu, mỗi chuỗi là chữ (Helvetica, ASCII) của một trang để pypdf trích được.
+    bomb_page=i: content stream trang i là FlateDecode, giải nén ra ~8MB (zlib nén còn vài KB)."""
+    texts = texts or ("",)
+    kids = b" ".join(b"%d 0 R" % (4 + 2 * i) for i in range(len(texts)))
     objs = [b"<< /Type /Catalog /Pages 2 0 R >>",
-            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R "
-            b"/Resources << /Font << /F1 5 0 R >> >> >>",
-            b"<< /Length %d >>\nstream\n" % len(stream) + stream + b"\nendstream",
+            b"<< /Type /Pages /Kids [%s] /Count %d >>" % (kids, len(texts)),
             b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"]
+    for i, text in enumerate(texts):
+        stream, extra = f"BT /F1 12 Tf 72 720 Td ({text}) Tj ET".encode(), b""
+        if i == bomb_page:
+            stream, extra = zlib.compress(stream + b" " * (8 * 1024 * 1024)), b" /Filter /FlateDecode"
+        objs += [b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents %d 0 R "
+                 b"/Resources << /Font << /F1 3 0 R >> >> >>" % (5 + 2 * i),
+                 b"<< /Length %d%s >>\nstream\n" % (len(stream), extra) + stream + b"\nendstream"]
     out, offsets = b"%PDF-1.4\n", []
     for i, body in enumerate(objs, 1):
         offsets.append(len(out))
@@ -257,6 +269,32 @@ class TestCvUpload:
         client = login(app)
         r = client.post("/api/assistant/profile/cv", files={"file": ("scan.pdf", make_pdf(""), "application/pdf")})
         assert r.status_code == 400 and "không đọc được chữ" in r.json()["detail"]
+
+    def test_pdf_bomb_stream_over_4mb_is_rejected_fast(self, app):
+        client = login(app)
+        pdf = make_pdf("Kinh nghiem 3 nam content TikTok va Facebook cho my pham", bomb_page=0)
+        assert len(pdf) < 50 * 1024  # upload nhỏ, content stream giải nén ra 8MB
+        start = time.monotonic()
+        r = client.post("/api/assistant/profile/cv", files={"file": ("bomb.pdf", pdf, "application/pdf")})
+        assert r.status_code == 400 and "bị lỗi" in r.json()["detail"]
+        assert time.monotonic() - start < 3
+
+    def test_pdf_reads_only_first_10_pages(self, app):
+        client = login(app)
+        pdf = make_pdf(*(f"P{i} Kinh nghiem content marketing TikTok" for i in range(1, 13)))
+        r = client.post("/api/assistant/profile/cv", files={"file": ("cv.pdf", pdf, "application/pdf")})
+        assert r.status_code == 200, r.text
+        text = app.get_store().conn.execute("SELECT cv_text FROM user_profiles").fetchone()["cv_text"]
+        assert "P1 " in text and "P10 " in text and "P11" not in text and "P12" not in text
+
+    def test_pdf_stops_reading_once_20000_chars_collected(self, app):
+        client = login(app)
+        # 7 trang x 3000 ký tự đã đủ 20.000: trang 8 (bom giải nén) không được parse nên upload vẫn thành công
+        pdf = make_pdf(*("Kinh nghiem content marketing TikTok. " * 80 for _ in range(7)),
+                       "Trang cuoi", bomb_page=7)
+        r = client.post("/api/assistant/profile/cv", files={"file": ("cv.pdf", pdf, "application/pdf")})
+        assert r.status_code == 200, r.text
+        assert r.json()["cv_chars"] == 20000
 
 
 def add_job(appmod, **kw) -> int:
@@ -458,6 +496,39 @@ class TestChat:
         ev = events(client.post("/api/assistant/chat", json={"message": "x"}))
         assert ev[-1] == ("error", {"code": "llm_error",
                                     "message": "Em bị lỗi kết nối AI mất rồi, công chúa bấm thử lại giúp em nha 🥺"})
+
+    @pytest.mark.parametrize("failure, status", [
+        (httpx.ConnectError("down"), None),
+        (httpx.HTTPStatusError("HTTP 401", request=httpx.Request("POST", "https://llm.example/v1"),
+                               response=httpx.Response(401)), 401),
+    ])
+    def test_llm_failure_is_logged_as_warning(self, app, monkeypatch, caplog, failure, status):
+        client = login(app)
+        fake_llm(monkeypatch, [failure])
+        with caplog.at_level(logging.WARNING, logger="agent_search_job.assistant.agent"):
+            ev = events(client.post("/api/assistant/chat", json={"message": "x"}))
+        assert ev[-1][1]["code"] == "llm_error"
+        recs = [r for r in caplog.records if r.name == "agent_search_job.assistant.agent"]
+        assert [(r.levelno, r.getMessage(), r.exc_info is not None) for r in recs] == [
+            (logging.WARNING, f"assistant LLM call failed (status {status})", True)]
+
+    def test_silent_reasoning_sends_ping_comments_without_changing_events(self, app, monkeypatch):
+        import agent_search_job.assistant.agent as agent
+        client = login(app)
+        thinking = [{"reasoning_content": f"nghĩ {i} "} for i in range(8)]
+        # đồng hồ giả nhảy 6 giây mỗi lần đọc: reasoning-only kéo dài > 15 giây thì phải có ping
+        ticks = itertools.count(6, 6)
+        monkeypatch.setattr(agent, "time", types.SimpleNamespace(monotonic=lambda: next(ticks)))
+        fake_llm(monkeypatch, [sse(*thinking, {"content": "Dạ em đây"})])
+        r = client.post("/api/assistant/chat", json={"message": "x"})
+        assert r.text.count(": ping\n\n") >= 1 and "event: ping" not in r.text
+        assert r.text.index(": ping\n\n") < r.text.index("event: token")
+        assert [e for e, _ in events(r)] == ["conversation", "token", "done"]
+        # đồng hồ đứng yên: không có ping
+        monkeypatch.setattr(agent, "time", types.SimpleNamespace(monotonic=lambda: 0.0))
+        fake_llm(monkeypatch, [sse(*thinking, {"content": "Dạ em đây"})])
+        r = client.post("/api/assistant/chat", json={"message": "x"})
+        assert ": ping" not in r.text and [e for e, _ in events(r)] == ["conversation", "token", "done"]
 
     def test_validation_and_ownership(self, app, monkeypatch):
         monkeypatch.delenv("OPENAI_API_KEY")
@@ -848,6 +919,62 @@ class TestMarketStatsAndWebFixes:
         cached = json.loads(app.get_store().conn.execute("SELECT payload FROM web_search_cache").fetchone()[0])
         assert cached["results"] == results
         assert [s["url"] for s in [d for e, d in ev if e == "tool_end"][0]["sources"]] == [h["url"] for h in results]
+
+
+class TestGuestGlobalCaps:
+    """Khách tự chọn cookie (= owner mới, quota mới) nên có thêm trần chung cho mọi khách trong ngày."""
+
+    @staticmethod
+    def guest(appmod, ch):
+        return TestClient(appmod.app, cookies={"vnjobs_guest": ch * 32})
+
+    @staticmethod
+    def seed_usage(appmod, owner, messages=0, web_searches=0):
+        store = appmod.get_store()
+        with store.conn:
+            store.conn.execute("INSERT INTO assistant_usage(owner, day, messages, web_searches) VALUES (?,?,?,?)",
+                               (owner, utcnow().isoformat()[:10], messages, web_searches))
+
+    def test_guest_messages_share_one_daily_cap_across_cookies(self, public_app, monkeypatch):
+        monkeypatch.delenv("OPENAI_API_KEY")
+        monkeypatch.setenv("ASSISTANT_GUEST_DAILY_MESSAGES", "1")
+        assert self.guest(public_app, "g").post("/api/assistant/chat", json={"message": "1"}).status_code == 200
+        r = self.guest(public_app, "h").post("/api/assistant/chat", json={"message": "2"})
+        assert r.status_code == 429 and "mai mình nói tiếp" in r.json()["detail"]
+
+    def test_guest_message_cap_defaults_to_300(self, public_app, monkeypatch):
+        monkeypatch.delenv("OPENAI_API_KEY")
+        for ch, n in (("a", 100), ("b", 100), ("c", 99)):  # mỗi khách chưa chạm 100, tổng 299
+            self.seed_usage(public_app, "guest:" + ch * 32, messages=n)
+        assert self.guest(public_app, "d").post("/api/assistant/chat", json={"message": "1"}).status_code == 200
+        assert self.guest(public_app, "e").post("/api/assistant/chat", json={"message": "2"}).status_code == 429
+
+    def test_guest_web_searches_share_one_daily_cap(self, public_app, monkeypatch):
+        monkeypatch.setenv("TAVILY_API_KEY", "tvly-test")
+        monkeypatch.setenv("ASSISTANT_GUEST_DAILY_WEB_SEARCHES", "1")
+        self.seed_usage(public_app, "guest:" + "h" * 32, web_searches=1)  # khách khác đã dùng hết trần chung
+        text, fake, ev = run_tool(self.guest(public_app, "g"), monkeypatch, "company_web_search",
+                                  {"company_name": "ABC", "topic": "overview"}, tavily={"results": []})
+        assert "Đã hết lượt tra internet hôm nay" in text and fake.posts == []
+        assert [d["ok"] for e, d in ev if e == "tool_end"] == [True] and ev[-1][0] == "done"
+
+    def test_guest_web_search_cap_defaults_to_30(self, public_app, monkeypatch):
+        monkeypatch.setenv("TAVILY_API_KEY", "tvly-test")
+        self.seed_usage(public_app, "guest:" + "h" * 32, web_searches=29)
+        self.seed_usage(public_app, "guest:" + "i" * 32, web_searches=1)
+        text, fake, _ = run_tool(self.guest(public_app, "g"), monkeypatch, "company_web_search",
+                                 {"company_name": "ABC", "topic": "overview"}, tavily={"results": []})
+        assert "hết lượt" in text and fake.posts == []
+
+    def test_guest_caps_do_not_limit_signed_in_users(self, app, monkeypatch):
+        monkeypatch.setenv("TAVILY_API_KEY", "tvly-test")
+        monkeypatch.setenv("ASSISTANT_GUEST_DAILY_MESSAGES", "0")
+        monkeypatch.setenv("ASSISTANT_GUEST_DAILY_WEB_SEARCHES", "0")
+        self.seed_usage(app, "guest:" + "h" * 32, messages=500, web_searches=500)
+        text, fake, ev = run_tool(login(app), monkeypatch, "company_web_search",
+                                  {"company_name": "ABC", "topic": "overview"}, tavily={"results": []})
+        assert ev[-1][0] == "done" and len(fake.posts) == 1
+        assert json.loads(text[len("<search_results>"):-len("</search_results>")])["status"] == "ok"
 
 
 def test_purge_backup_has_no_chat(tmp_path):

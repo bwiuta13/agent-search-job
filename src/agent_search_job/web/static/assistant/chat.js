@@ -26,13 +26,13 @@ DOMPurify.addHook("afterSanitizeAttributes", (node) => {
 });
 // Allowlist (không phải denylist): chỉ giữ thẻ chữ/bảng/link, KHÔNG có img/video/audio/svg/style... để câu trả lời bị tiêm lệnh
 // (JD, review, CV) không thể làm trình duyệt tự gọi ra ngoài (rò rỉ dữ liệu qua ![](https://...), <video poster>, <table background>...).
-// Link chỉ http(s) và đường dẫn nội bộ (/jobs/...), chặn javascript:, data:, //host. start/align là số/chữ, không phải URL.
+// Link chỉ http(s) và đường dẫn nội bộ (/jobs/...), chặn javascript:, data:, //host và /\host (trình duyệt coi \ như /). start/align là số/chữ, không phải URL.
 const md = (text) => DOMPurify.sanitize(marked.parse(text), {
   ALLOWED_TAGS: ["p", "br", "strong", "em", "b", "i", "del", "code", "pre", "blockquote", "ul", "ol", "li", "a",
     "h1", "h2", "h3", "h4", "h5", "h6", "hr", "table", "thead", "tbody", "tr", "th", "td"],
   ALLOWED_ATTR: ["href", "title", "start", "align"],
   ADD_URI_SAFE_ATTR: ["start", "align"],
-  ALLOWED_URI_REGEXP: /^(?:https?:|\/(?!\/))/i,
+  ALLOWED_URI_REGEXP: /^(?:https?:|\/(?![\/\\]))/i,
 });
 
 const setOrb = (state) => {
@@ -176,9 +176,12 @@ const send = async (text) => {
       method: "POST", headers: { "Content-Type": "application/json" }, signal: controller.signal,
       body: JSON.stringify({ conversation_id: convId, message: text, deep_think: deepBtn.getAttribute("aria-pressed") === "true" }),
     });
-    if (!r.ok) throw new ApiError(apiText((await r.json().catch(() => ({}))).detail, ERR_GENERIC));
+    if (!r.ok) {
+      if (r.status === 404) convId = null; // hội thoại đã hết hạn/bị xoá: "Thử lại" phải mở hội thoại mới, không gửi lại id cũ mãi
+      throw new ApiError(apiText((await r.json().catch(() => ({}))).detail, ERR_GENERIC));
+    }
     const reader = r.body.pipeThrough(new TextDecoderStream()).getReader();
-    let buf = "";
+    let buf = "", ended = false;
     for (;;) {
       const { value, done } = await reader.read();
       if (done) break;
@@ -187,7 +190,7 @@ const send = async (text) => {
       while ((cut = buf.indexOf("\n\n")) >= 0) {
         const block = buf.slice(0, cut);
         buf = buf.slice(cut + 2);
-        const name = /^event: (.+)$/m.exec(block)?.[1];
+        const name = /^event: (.+)$/m.exec(block)?.[1]; // khối không có dòng event: (comment `: ping` giữ kết nối) không khớp nhánh nào -> bỏ qua
         const data = JSON.parse(/^data: ?([^\n]*)/m.exec(block)?.[1] || "{}"); // [^\n]: server gửi thẳng U+2028/2029, "." sẽ dừng ở đó
         if (name === "conversation") convId = data.id;
         else if (name === "tool_start") {
@@ -209,9 +212,14 @@ const send = async (text) => {
           // render markdown tối đa 1 lần mỗi frame cho mượt khi token về nhanh
           frame ||= requestAnimationFrame(() => { frame = 0; bubble.innerHTML = md(raw); });
         } else if (name === "error") throw new ApiError(apiText(data.message, ERR_GENERIC));
-        else if (name === "done") loadHistory();
+        else if (name === "done") {
+          ended = true;
+          loadHistory();
+        }
       }
     }
+    // stream đóng mà không có done/error (proxy cắt, server restart, rớt mạng): coi là lỗi để hiện thông báo + "Thử lại"
+    if (!ended) throw new ApiError(ERR_GENERIC);
   } catch (e) {
     if (e.name !== "AbortError") {
       const p = el("p", "as-error", e instanceof ApiError ? e.message : ERR_GENERIC);
@@ -243,7 +251,7 @@ input.addEventListener("keydown", (e) => {
   // isComposing: không gửi khi đang gõ dấu tiếng Việt bằng bộ gõ (Telex/VNI)
   if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
     e.preventDefault();
-    $("#composer").requestSubmit();
+    if (!controller) $("#composer").requestSubmit(); // đang stream: Enter không được làm gì (submit lúc này = Dừng); chỉ nút Dừng mới ngắt
   }
 });
 input.addEventListener("input", () => {
@@ -285,7 +293,8 @@ $("#cv-file").addEventListener("change", async (e) => {
     return;
   }
   if (!r.ok) {
-    $("#cv-status").textContent = apiText(data.detail, "Em không đọc được file này ạ.");
+    // 413 do Nginx (client_max_body_size) trả HTML, không có detail JSON
+    $("#cv-status").textContent = r.status === 413 ? "File CV tối đa 5MB thôi ạ" : apiText(data.detail, "Em không đọc được file này ạ.");
     return;
   }
   await loadProfile();

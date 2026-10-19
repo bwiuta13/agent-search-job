@@ -93,6 +93,27 @@ docker compose run --rm app python scripts/crawl.py --db data/jobs.db --max-resu
 docker compose down
 ```
 
+### Nginx cho Trợ lý AI
+
+Trang `/assistant` cần các dòng sau trong `location /` của Nginx; thiếu thì app vẫn chạy nhưng chat, hồ sơ và upload CV lỗi:
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:8765;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    client_max_body_size 6m;
+    proxy_read_timeout 300s;
+    proxy_buffering off;
+}
+```
+
+- `proxy_set_header Host $host`: app so header `Origin` với `Host` để chặn POST từ trang khác; mặc định Nginx gửi `Host: 127.0.0.1:8765` nên mọi POST chat/hồ sơ/CV bị 403.
+- `proxy_set_header X-Forwarded-Proto $scheme`: báo scheme gốc để app đặt cookie `Secure` khi chạy https (uvicorn chỉ tin header này từ các IP trong `FORWARDED_ALLOW_IPS`, mặc định `127.0.0.1,::1`).
+- `client_max_body_size 6m`: mặc định 1MB, CV 1–5MB sẽ bị 413.
+- `proxy_read_timeout 300s`: mặc định 60 giây; Deep Think có thể suy luận lâu mà chưa có chữ nào. App gửi dòng ping `: ping` mỗi 15 giây khi đang im lặng, 300 giây là mức dự phòng.
+- `proxy_buffering off`: để câu trả lời stream về từng đoạn thay vì đến một lần.
+
 ## Đăng nhập & bảo mật
 
 - Mỗi email được mời có một **mã truy cập ngẫu nhiên** (`secrets.token_urlsafe(24)`, lưu ở `users.token`), tạo khi email được seed. Lấy bằng `python scripts/show_token.py data/jobs.db` rồi gửi riêng cho từng người.
@@ -232,9 +253,9 @@ Trang chat (link "Trợ lý AI" trên thanh menu): người dùng là "công ch�
 | `company_web_search` | Tavily (`TAVILY_API_KEY`), cache 7 ngày (tin tức 24 giờ), có nguồn |
 
 - **Deep Think**: cho agent tối đa 10 vòng gọi tool (mặc định 6) và câu trả lời dài hơn.
-- **Hồ sơ / CV**: ô "Giới thiệu bản thân" + upload CV PDF/DOCX ≤ 5MB — chỉ lưu phần chữ, không lưu file gốc. PDF đọc bằng `pypdf`; DOCX đọc trực tiếp `word/document.xml` trong file zip có giới hạn kích thước giải nén (không dùng python-docx).
+- **Hồ sơ / CV**: ô "Giới thiệu bản thân" + upload CV PDF/DOCX ≤ 5MB — chỉ lưu phần chữ, không lưu file gốc. PDF đọc bằng `pypdf` (tối đa 10 trang đầu, dừng khi đủ 20.000 ký tự, stream giải nén > 4MB bị từ chối để chặn PDF bomb); DOCX đọc trực tiếp `word/document.xml` trong file zip có giới hạn kích thước giải nén (không dùng python-docx).
 - **Dữ liệu chat tự xoá** 24 giờ sau tin nhắn cuối (`ASSISTANT_CHAT_TTL_HOURS`): dọn khi khởi động, mỗi giờ khi server chạy và ở mỗi request API; bản backup của `make purge` không chứa chat và hồ sơ khách.
-- **Giới hạn**: `ASSISTANT_DAILY_MESSAGES` (100), `ASSISTANT_DAILY_WEB_SEARCHES` (20) mỗi người mỗi ngày.
+- **Giới hạn**: `ASSISTANT_DAILY_MESSAGES` (100), `ASSISTANT_DAILY_WEB_SEARCHES` (20) mỗi người mỗi ngày; ở public mode còn có trần chung cho mọi khách (khách tự đổi cookie được): `ASSISTANT_GUEST_DAILY_MESSAGES` (300), `ASSISTANT_GUEST_DAILY_WEB_SEARCHES` (30) mỗi ngày.
 - **3D**: Three.js r186 vendor trong `src/agent_search_job/web/static/vendor` (xem `VERSIONS.md`); `src/agent_search_job/web/static/assistant/stage.js` vẽ quả cầu (lõi màu bọc vỏ kính) và có sẵn ô nhân vật góc dưới trái — gắn nhân vật bằng `stage.setCharacter("/static/assistant/<file>.glb")`.
 
 ## Test

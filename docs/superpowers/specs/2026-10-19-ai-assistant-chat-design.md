@@ -163,7 +163,7 @@ Tất cả dưới `current_user` (cookie session hoặc bearer); khách (public
 | GET | `/api/assistant/conversations/{id}` | tin nhắn + `meta` (thẻ job, nguồn) |
 | DELETE | `/api/assistant/conversations/{id}` | xoá |
 | GET / PUT / DELETE | `/api/assistant/profile` | `{about, cv_filename, cv_chars, updated_at}`; PUT `{about ≤ 4000}`; DELETE xoá cả hồ sơ |
-| POST | `/api/assistant/profile/cv` | multipart `file` (.pdf/.docx ≤ 5MB) → `{cv_filename, cv_chars, preview}` |
+| POST | `/api/assistant/profile/cv` | multipart `file` (.pdf/.docx ≤ 5MB) → `{cv_filename, cv_chars, preview}`; PDF: tối đa 10 trang đầu, dừng khi đủ 20.000 ký tự, stream giải nén > 4MB (`pypdf.filters.ZLIB_MAX_OUTPUT_LENGTH`) → 400 (chặn PDF bomb; guest gọi được route này) |
 
 ### Event SSE (`event: <type>\ndata: <json>\n\n`)
 
@@ -179,6 +179,10 @@ Tất cả dưới `current_user` (cookie session hoặc bearer); khách (public
 Lỗi xác định được **trước khi** stream (body sai → 400, vượt quota → 429, hội thoại không thuộc owner → 404, `Origin` sai → 403, khách thiếu cookie → 401) trả HTTP JSON chuẩn FastAPI `{"detail": "…"}`, không mở stream; `chat.js` xử lý cả hai dạng.
 
 Response dùng `StreamingResponse(media_type="text/event-stream")` với header `Cache-Control: no-cache`, `X-Accel-Buffering: no` (Nginx trên GCE không buffer).
+
+**Keep-alive**: khi model chỉ đang suy luận (`reasoning_content`) hoặc gom `tool_calls` mà ≥ 15 giây chưa gửi gì xuống client, `run_agent` phát `("ping", {})` ở delta kế tiếp và route ghi **dòng comment SSE** `: ping\n\n` (không có dòng `event:`); `chat.js` bỏ qua khối không có `event:`. Mục đích: `proxy_read_timeout` của Nginx (mặc định 60 giây) không cắt vòng Deep Think.
+
+**Yêu cầu Nginx** (README mục "Nginx cho Trợ lý AI"): `proxy_set_header Host $host` (kiểm tra `Origin` so với `Host`; mặc định Nginx gửi `127.0.0.1:8765` → mọi POST 403), `proxy_set_header X-Forwarded-Proto $scheme`, `client_max_body_size 6m` (mặc định 1MB → CV bị 413, `chat.js` báo "File CV tối đa 5MB thôi ạ"), `proxy_read_timeout 300s`, `proxy_buffering off`.
 
 ## 7. Dữ liệu
 
@@ -259,12 +263,15 @@ CREATE TABLE IF NOT EXISTS assistant_usage (
 | Tình huống | Hành vi |
 |---|---|
 | Chưa có `OPENAI_API_KEY` | event `error{code:"llm_not_configured", message:"Em chưa được kết nối AI ạ"}` |
-| LLM lỗi/timeout giữa chừng | giữ phần đã stream trên UI, event `error{code:"llm_error"}`, UI hiện nút "Thử lại" (gửi lại câu hỏi cuối); không lưu câu trả lời dở |
+| LLM lỗi/timeout giữa chừng | giữ phần đã stream trên UI, event `error{code:"llm_error"}`, UI hiện nút "Thử lại" (gửi lại câu hỏi cuối); không lưu câu trả lời dở; backend ghi `log.warning` kèm traceback và mã HTTP của LLM (nếu có) |
+| Stream đóng mà không có `done`/`error` (proxy cắt, restart, rớt mạng) | `chat.js` coi là lỗi chung: hiện thông báo + "Thử lại" |
+| Chat trả 404 (hội thoại đã hết hạn/bị xoá) | `chat.js` bỏ `conversation_id` cũ nên "Thử lại" mở hội thoại mới |
+| Bấm Enter khi đang stream | không làm gì; chỉ nút "Dừng" mới ngắt câu trả lời |
 | Tool raise / tham số sai | nội dung tool = thông báo lỗi; model tự giải thích; `tool_end.ok=false` |
 | Thiếu `TAVILY_API_KEY` / Tavily lỗi | tool trả `{"status": "unavailable", "note": …}` |
-| Vượt `ASSISTANT_DAILY_MESSAGES` (100) | HTTP 429 `{"detail": "Hôm nay công chúa hỏi em nhiều quá rồi, mai mình nói tiếp nha 💐"}` (lỗi trước khi stream, cùng dạng với mọi lỗi pre-stream ở mục 6) |
-| Vượt `ASSISTANT_DAILY_WEB_SEARCHES` (20) | tool trả `unavailable` kèm lý do quota |
-| CV sai loại / > 5MB / không có chữ | HTTP 400 kèm lý do tiếng Việt |
+| Vượt `ASSISTANT_DAILY_MESSAGES` (100) hoặc — với khách — tổng tin nhắn của mọi khách trong ngày vượt `ASSISTANT_GUEST_DAILY_MESSAGES` (300) | HTTP 429 `{"detail": "Hôm nay công chúa hỏi em nhiều quá rồi, mai mình nói tiếp nha 💐"}` (lỗi trước khi stream, cùng dạng với mọi lỗi pre-stream ở mục 6) |
+| Vượt `ASSISTANT_DAILY_WEB_SEARCHES` (20) hoặc — với khách — tổng lượt tra web của mọi khách trong ngày vượt `ASSISTANT_GUEST_DAILY_WEB_SEARCHES` (30) | tool trả `unavailable` kèm lý do quota |
+| CV sai loại / > 5MB / không có chữ / PDF bomb (stream giải nén > 4MB) | HTTP 400 kèm lý do tiếng Việt (Nginx chặn > `client_max_body_size` trả 413 → `chat.js` báo "File CV tối đa 5MB thôi ạ") |
 | `conversation_id` không thuộc owner | 404 |
 | `Origin` khác host | 403 |
 
@@ -276,11 +283,11 @@ CREATE TABLE IF NOT EXISTS assistant_usage (
 2. Hết số vòng → request cuối không có `tools`.
 3. `market_stats` qua chat (LLM giả gọi tool) → số liệu đúng với job fixture.
 4. `company_web_search`: Tavily giả; lần 2 lấy cache (không gọi HTTP); thiếu key → `unavailable`; quota web vượt → `unavailable`.
-5. Upload CV: PDF tạo trong test và DOCX tạo bằng `zipfile` (không python-docx) → `cv_chars > 0`; sai đuôi/magic, > 5MB, không có chữ → 400; DOCX zip bomb (> 10MB giải nén) → 400; bzip2/LZMA → 400; STORED → chấp nhận; thiếu `word/document.xml` → 400.
+5. Upload CV: PDF tạo trong test và DOCX tạo bằng `zipfile` (không python-docx) → `cv_chars > 0`; sai đuôi/magic, > 5MB, không có chữ → 400; DOCX zip bomb (> 10MB giải nén) → 400; bzip2/LZMA → 400; STORED → chấp nhận; thiếu `word/document.xml` → 400; PDF có stream giải nén > 4MB → 400 trong < 3 giây; PDF 12 trang chỉ lấy 10 trang đầu; dừng parse khi đủ 20.000 ký tự.
 6. Phân quyền: user B không đọc/xoá được hội thoại của A (404); khách nhận cookie `vnjobs_guest` và chỉ thấy hội thoại của mình.
 7. TTL: hội thoại có `updated_at` cũ hơn 24 giờ biến mất ở lần gọi API kế tiếp và khi app khởi động (lifespan); hồ sơ user đăng nhập vẫn còn, hồ sơ khách cũ bị xoá.
-8. Rate limit: vượt quota tin nhắn → 429.
-9. LLM chưa cấu hình → event `error llm_not_configured`.
+8. Rate limit: vượt quota tin nhắn → 429; hai khách khác cookie cùng bị trần chung `ASSISTANT_GUEST_DAILY_MESSAGES` / `ASSISTANT_GUEST_DAILY_WEB_SEARCHES` (người đăng nhập không bị ảnh hưởng).
+9. LLM chưa cấu hình → event `error llm_not_configured`; LLM lỗi (ConnectError, HTTP 401) → `log.warning` kèm mã HTTP; reasoning im lặng quá 15 giây (đồng hồ giả) → dòng `: ping`, chuỗi event không đổi.
 10. `scripts/purge.py`: file backup không còn chat và hồ sơ khách (đã VACUUM), hồ sơ người đăng nhập giữ nguyên; DB chính giữ chat còn hạn.
 
 Frontend: kiểm tra bằng trình duyệt tích hợp (preview `web-pink-preview`, cổng 8766): trạng thái trống, đang stream (orb đổi state, thẻ job, nguồn), mobile 375px, console không lỗi, giả lập không WebGL → orb CSS.
@@ -293,6 +300,8 @@ TAVILY_API_KEY=                     # trống -> agent không tra internet
 ASSISTANT_CHAT_TTL_HOURS=24         # hội thoại tự xoá sau N giờ không hoạt động
 ASSISTANT_DAILY_MESSAGES=100        # tin nhắn / người / ngày
 ASSISTANT_DAILY_WEB_SEARCHES=20     # lượt tra web / người / ngày
+ASSISTANT_GUEST_DAILY_MESSAGES=300      # trần CHUNG: tin nhắn của mọi khách (public mode) / ngày
+ASSISTANT_GUEST_DAILY_WEB_SEARCHES=30   # trần CHUNG: lượt tra web của mọi khách / ngày
 ```
 
 ## 12. Rủi ro
@@ -300,5 +309,8 @@ ASSISTANT_DAILY_WEB_SEARCHES=20     # lượt tra web / người / ngày
 - Model `z-ai/glm-5.3` trên tokenplan không có trong catalog công khai → có thể đổi/ngừng; cấu hình qua `AI_TEXT_MODEL`, lỗi được báo rõ.
 - Tool call ngẫu nhiên gọi sai tham số → validation sẵn có của `SearchFilters` trả lỗi cho model tự sửa.
 - Prompt injection từ kết quả web/CV → bọc dữ liệu + nhắc trong system prompt + backend tự dựng query, không fetch URL do model đưa.
-- Chi phí token: mỗi câu hỏi 2–4 lượt gọi LLM; giới hạn ngày + cắt gọn kết quả tool.
+- Chi phí token: mỗi câu hỏi 2–4 lượt gọi LLM (tối đa 7–11 khi Deep Think); giới hạn ngày + cắt gọn kết quả tool.
+- Khách (public mode) tự chọn cookie `vnjobs_guest` nên quota theo owner không chặn được người cố ý đổi cookie → thêm trần chung `ASSISTANT_GUEST_DAILY_*` cho toàn bộ khách (tin nhắn 300, tra web 30 mỗi ngày). Khách thật có thể bị chặn khi người khác dùng hết trần; chấp nhận để bảo vệ chi phí LLM/Tavily.
+- PDF bomb qua `/profile/cv` (khách gọi được): giới hạn giải nén 4MB mỗi stream, 10 trang, 20.000 ký tự; route sync chạy threadpool nên vẫn chiếm GIL trong lúc parse.
+- Nginx mặc định (Host 127.0.0.1, body 1MB, read timeout 60 giây) làm hỏng chat/CV: bắt buộc cấu hình theo README.
 - Three.js transmission nặng trên máy yếu → shader fresnel + fallback CSS.

@@ -5,8 +5,9 @@ Vòng lặp (spec docs/superpowers/specs/2026-10-19-ai-assistant-chat-design.md 
 (role=tool) -> lặp tới khi model trả lời chữ. Tối đa MAX_ROUNDS vòng có tool (Deep Think:
 MAX_ROUNDS_DEEP); hết vòng thì gọi một lần không kèm tools để model buộc phải trả lời.
 
-run_agent sinh (event, data): token, tool_start, tool_end, final {content, meta} hoặc
-error {code, message}. Route SSE lưu câu trả lời khi nhận final.
+run_agent sinh (event, data): token, tool_start, tool_end, final {content, meta}, error {code, message}
+hoặc ping {} (giữ kết nối: model chỉ đang suy luận/gom tool_calls, chưa có gì để gửi client; route SSE
+đổi thành dòng comment `: ping`). Route SSE lưu câu trả lời khi nhận final.
 """
 from __future__ import annotations
 
@@ -17,6 +18,7 @@ import logging
 import os
 import re
 import statistics
+import time
 from datetime import timedelta
 from typing import AsyncIterator, Optional
 from urllib.parse import urlparse
@@ -36,6 +38,7 @@ log = logging.getLogger(__name__)
 MAX_ROUNDS = 6
 MAX_ROUNDS_DEEP = 10
 TOOL_RESULT_MAX_CHARS = 12000
+PING_AFTER_SECONDS = 15  # im lặng với client quá ngần này giây thì phát ping (proxy_read_timeout của Nginx)
 SEARCH_ARG_KEYS = ("query", "role_clusters", "districts", "salary_min_vnd", "job_levels",
                    "work_modes", "company_query")
 TAVILY_URL = "https://api.tavily.com/search"
@@ -165,6 +168,7 @@ async def run_agent(store: JobStore, owner: str, history: list[dict], message: s
                 body["tools"] = TOOLS
                 body["tool_choice"] = "auto"
             content, reasoning, calls = "", "", {}
+            last_sent = time.monotonic()  # lần cuối có gì gửi xuống client trong vòng stream này
             try:
                 async with client.stream("POST", f"{cfg.base_url}/chat/completions",
                                          headers=headers, json=body) as resp:
@@ -182,13 +186,21 @@ async def run_agent(store: JobStore, owner: str, history: list[dict], message: s
                         if delta.get("content"):
                             content += delta["content"]
                             yield "token", {"text": delta["content"]}
+                            last_sent = time.monotonic()
                         for tc in delta.get("tool_calls") or []:
                             slot = calls.setdefault(tc.get("index", 0), {"id": "", "name": "", "arguments": ""})
                             fn = tc.get("function") or {}
                             slot["id"] = tc.get("id") or slot["id"]
                             slot["name"] = fn.get("name") or slot["name"]
                             slot["arguments"] += fn.get("arguments") or ""
-            except (httpx.HTTPError, json.JSONDecodeError, AttributeError):
+                        if time.monotonic() - last_sent >= PING_AFTER_SECONDS:
+                            # Deep Think suy luận / gom tool_calls nhiều giây mà không có token: gửi ping để
+                            # Nginx (proxy_read_timeout) và trình duyệt không cắt kết nối đang im lặng
+                            yield "ping", {}
+                            last_sent = time.monotonic()
+            except (httpx.HTTPError, json.JSONDecodeError, AttributeError) as e:
+                log.warning("assistant LLM call failed (status %s)",
+                            getattr(getattr(e, "response", None), "status_code", None), exc_info=True)
                 yield "error", {"code": "llm_error",
                                 "message": "Em bị lỗi kết nối AI mất rồi, công chúa bấm thử lại giúp em nha 🥺"}
                 return
@@ -352,7 +364,12 @@ async def run_agent(store: JobStore, owner: str, history: list[dict], message: s
                         elif not os.environ.get("TAVILY_API_KEY"):
                             result = {"status": "unavailable", "note": "Chưa cấu hình tra cứu internet"}
                         elif (used["web_searches"] if used else 0) >= int(
-                                os.environ.get("ASSISTANT_DAILY_WEB_SEARCHES") or 20):
+                                os.environ.get("ASSISTANT_DAILY_WEB_SEARCHES") or 20) or (
+                                # khách tự chọn cookie (= owner mới) nên còn có trần chung cho mọi khách trong ngày
+                                owner.startswith("guest:") and store.conn.execute(
+                                    "SELECT COALESCE(SUM(web_searches), 0) FROM assistant_usage "
+                                    "WHERE owner LIKE 'guest:%' AND day=?", (day,)).fetchone()[0] >= int(
+                                    os.environ.get("ASSISTANT_GUEST_DAILY_WEB_SEARCHES") or 30)):
                             result = {"status": "unavailable", "note": "Đã hết lượt tra internet hôm nay"}
                         else:
                             try:
