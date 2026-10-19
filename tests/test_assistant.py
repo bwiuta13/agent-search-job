@@ -132,3 +132,65 @@ class TestHistoryAndProfile:
         r = client.put("/api/assistant/profile", json={"about": "x"},
                        headers={"origin": "https://evil.example"})
         assert r.status_code == 403
+
+
+def make_pdf(text: str) -> bytes:
+    """PDF 1 trang tối thiểu có chữ (Helvetica, ASCII) để pypdf trích được."""
+    stream = f"BT /F1 12 Tf 72 720 Td ({text}) Tj ET".encode()
+    objs = [b"<< /Type /Catalog /Pages 2 0 R >>",
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R "
+            b"/Resources << /Font << /F1 5 0 R >> >> >>",
+            b"<< /Length %d >>\nstream\n" % len(stream) + stream + b"\nendstream",
+            b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"]
+    out, offsets = b"%PDF-1.4\n", []
+    for i, body in enumerate(objs, 1):
+        offsets.append(len(out))
+        out += b"%d 0 obj\n" % i + body + b"\nendobj\n"
+    xref = len(out)
+    out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objs) + 1)
+    out += b"".join(b"%010d 00000 n \n" % o for o in offsets)
+    out += b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (len(objs) + 1, xref)
+    return out
+
+
+class TestCvUpload:
+    def test_pdf_cv_is_extracted_and_original_not_kept(self, app):
+        client = login(app)
+        pdf = make_pdf("Kinh nghiem 3 nam content TikTok va Facebook cho my pham")
+        r = client.post("/api/assistant/profile/cv", files={"file": ("cv.pdf", pdf, "application/pdf")})
+        assert r.status_code == 200, r.text
+        assert r.json()["cv_chars"] > 30 and "TikTok" in r.json()["preview"]
+        prof = client.get("/api/assistant/profile").json()
+        assert prof["cv_filename"] == "cv.pdf" and prof["cv_chars"] == r.json()["cv_chars"]
+        row = app.get_store().conn.execute("SELECT cv_text FROM user_profiles").fetchone()
+        assert "%PDF" not in row["cv_text"]
+
+    def test_docx_cv_keeps_about(self, app):
+        from docx import Document
+        client = login(app)
+        client.put("/api/assistant/profile", json={"about": "Muốn làm Quận 1"})
+        buf = io.BytesIO()
+        doc = Document()
+        doc.add_paragraph("Kinh nghiệm 3 năm viết content TikTok, Facebook cho thương hiệu mỹ phẩm")
+        doc.save(buf)
+        r = client.post("/api/assistant/profile/cv", files={"file": ("CV Lan.docx", buf.getvalue(),
+                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document")})
+        assert r.status_code == 200 and "mỹ phẩm" in r.json()["preview"]
+        assert client.get("/api/assistant/profile").json()["about"] == "Muốn làm Quận 1"
+
+    @pytest.mark.parametrize("name,data,msg", [
+        ("cv.txt", b"hello world", "PDF hoặc DOCX"),
+        ("cv.pdf", b"PK\x03\x04 not a pdf", "PDF hoặc DOCX"),
+        ("cv.pdf", b"%PDF-1.4 broken", "bị lỗi"),
+        ("cv.pdf", b"%PDF-" + b"0" * (5 * 1024 * 1024), "5MB"),
+    ])
+    def test_bad_files_rejected(self, app, name, data, msg):
+        client = login(app)
+        r = client.post("/api/assistant/profile/cv", files={"file": (name, data, "application/octet-stream")})
+        assert r.status_code == 400 and msg in r.json()["detail"]
+
+    def test_pdf_without_text_rejected(self, app):
+        client = login(app)
+        r = client.post("/api/assistant/profile/cv", files={"file": ("scan.pdf", make_pdf(""), "application/pdf")})
+        assert r.status_code == 400 and "không đọc được chữ" in r.json()["detail"]

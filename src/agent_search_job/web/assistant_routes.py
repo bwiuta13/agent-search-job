@@ -8,12 +8,13 @@ Spec: docs/superpowers/specs/2026-10-19-ai-assistant-chat-design.md.
 """
 from __future__ import annotations
 
+import io
 import json
 import os
 import re
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 
 from ..domain.models import utcnow
 from .app import _uid, current_user, get_store
@@ -21,6 +22,7 @@ from .app import _uid, current_user, get_store
 router = APIRouter()
 GUEST_COOKIE = "vnjobs_guest"
 GUEST_TOKEN = re.compile(r"[A-Za-z0-9_-]{32}")  # secrets.token_urlsafe(24)
+MAX_CV_BYTES = 5 * 1024 * 1024
 
 
 def same_origin(request: Request) -> None:
@@ -111,3 +113,42 @@ async def delete_profile(owner: str = Depends(chat_owner)):
     with store.conn:
         store.conn.execute("DELETE FROM user_profiles WHERE owner=?", (owner,))
     return {"deleted": True}
+
+
+@router.post("/api/assistant/profile/cv", dependencies=[Depends(same_origin)])
+async def upload_cv(file: UploadFile = File(...), owner: str = Depends(chat_owner)):
+    """CV PDF/DOCX -> chỉ lưu phần chữ (≤ 20.000 ký tự) vào hồ sơ; không lưu file gốc."""
+    data = await file.read(MAX_CV_BYTES + 1)
+    if len(data) > MAX_CV_BYTES:
+        raise HTTPException(400, "File CV tối đa 5MB thôi ạ")
+    name = (file.filename or "").lower()
+    if name.endswith(".pdf") and data.startswith(b"%PDF-"):
+        kind = "pdf"
+    elif name.endswith(".docx") and data.startswith(b"PK\x03\x04"):
+        kind = "docx"
+    else:
+        raise HTTPException(400, "Em chỉ đọc được file PDF hoặc DOCX thôi ạ")
+    try:
+        if kind == "pdf":
+            from pypdf import PdfReader
+            text = "\n".join(p.extract_text() or "" for p in PdfReader(io.BytesIO(data)).pages)
+        else:
+            from docx import Document
+            doc = Document(io.BytesIO(data))
+            text = "\n".join([p.text for p in doc.paragraphs]
+                             + [c.text for t in doc.tables for row in t.rows for c in row.cells])
+    except Exception:  # noqa: BLE001 - file hỏng/mã hoá -> báo lỗi thân thiện
+        raise HTTPException(400, "File CV bị lỗi, em không mở được ạ")
+    text = re.sub(r"[ \t]+", " ", re.sub(r"\n\s*\n+", "\n\n", text)).strip()[:20000]
+    if len(text) < 30:
+        raise HTTPException(400, "Em không đọc được chữ trong file này ạ, công chúa dán nội dung "
+                                 "vào ô Hồ sơ giúp em nhé")
+    filename = (file.filename or "cv")[:200]
+    store = get_store()
+    with store.conn:
+        store.conn.execute(
+            "INSERT INTO user_profiles(owner, cv_text, cv_filename, updated_at) VALUES (?,?,?,?) "
+            "ON CONFLICT(owner) DO UPDATE SET cv_text=excluded.cv_text, "
+            "cv_filename=excluded.cv_filename, updated_at=excluded.updated_at",
+            (owner, text, filename, utcnow().isoformat()))
+    return {"cv_filename": filename, "cv_chars": len(text), "preview": text[:300]}
