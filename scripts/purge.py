@@ -8,6 +8,7 @@ Chiến lược dọn dữ liệu:
    nhất giữa lần cuối thấy trên nguồn (last_verified_at) và hạn nộp. Bỏ qua job có
    người đã lưu (saved_jobs). Xoá kèm cache AI (llm_enrichment) của job đó.
 3. (script này) xoá crawl_runs cũ hơn CRAWL_RUNS_KEEP_DAYS ngày (90), rồi VACUUM.
+   Bản backup bỏ hội thoại trợ lý AI (chat_conversations/chat_messages).
 Công ty + feedback giữ nguyên. Trước khi xoá thật luôn backup DB vào <thư mục DB>/backups/.
 
 Usage:
@@ -73,6 +74,12 @@ def main(argv=None) -> dict:
     backup = backup_dir / f"{Path(args.db).stem}-{now:%Y%m%d-%H%M%S}.db"
     dst = sqlite3.connect(backup)
     conn.backup(dst)  # backup API: gồm cả dữ liệu còn trong WAL
+    # backup không giữ hội thoại trợ lý AI (chat chỉ sống ASSISTANT_CHAT_TTL_HOURS giờ)
+    if dst.execute("SELECT 1 FROM sqlite_master WHERE name='chat_messages'").fetchone():
+        with dst:
+            dst.execute("DELETE FROM chat_messages")
+            dst.execute("DELETE FROM chat_conversations")
+        dst.execute("VACUUM")
     dst.close()
     report["backup"] = str(backup)
     print(f"Đã backup: {backup}")

@@ -848,3 +848,33 @@ class TestMarketStatsAndWebFixes:
         cached = json.loads(app.get_store().conn.execute("SELECT payload FROM web_search_cache").fetchone()[0])
         assert cached["results"] == results
         assert [s["url"] for s in [d for e, d in ev if e == "tool_end"][0]["sources"]] == [h["url"] for h in results]
+
+
+def test_purge_backup_has_no_chat(tmp_path):
+    import importlib.util
+    import sqlite3
+    from pathlib import Path
+    from agent_search_job.storage.store import JobStore
+    spec = importlib.util.spec_from_file_location(
+        "purge", Path(__file__).resolve().parent.parent / "scripts" / "purge.py")
+    purge = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(purge)
+    db = tmp_path / "jobs.db"
+    store = JobStore(str(db))
+    old = utcnow() - timedelta(days=120)
+    jid = store.insert_job(normalize_job(NormalizedJob(
+        title="A", company_name="B", source="vietnamworks", source_url="https://e.x/1",
+        source_job_id="1", city="Hồ Chí Minh", last_verified_at=old, deadline=old)))
+    now = utcnow().isoformat()
+    with store.conn:
+        store.conn.execute("UPDATE jobs SET is_active=0 WHERE job_id=?", (jid,))
+        cid = store.conn.execute("INSERT INTO chat_conversations(owner, title, created_at, updated_at) "
+                                 "VALUES ('user:1','bí mật',?,?)", (now, now)).lastrowid
+        store.conn.execute("INSERT INTO chat_messages(conversation_id, role, content, created_at) "
+                           "VALUES (?,?,?,?)", (cid, "user", "lương mong muốn 20 triệu", now))
+    report = purge.main(["--db", str(db)])
+    bk = sqlite3.connect(report["backup"])
+    assert bk.execute("SELECT COUNT(*) FROM chat_messages").fetchone()[0] == 0
+    assert bk.execute("SELECT COUNT(*) FROM chat_conversations").fetchone()[0] == 0
+    assert b"20 tri" not in Path(report["backup"]).read_bytes()  # đã VACUUM, không còn trong trang trống
+    assert store.conn.execute("SELECT COUNT(*) FROM chat_messages").fetchone()[0] == 1  # DB chính giữ chat còn hạn
