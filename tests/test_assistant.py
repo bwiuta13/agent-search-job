@@ -612,3 +612,72 @@ class TestChat:
         assert "OverflowError" in json.loads(fake.requests[1]["messages"][-1]["content"])["error"]
         assert ev[-1][0] == "done"
         assert f"assistant tool {name} failed" in caplog.text
+
+
+class TestMarketAndWeb:
+    def test_market_stats_by_company(self, app, monkeypatch):
+        client = login(app)
+        add_job(app, title="Content Executive", salary_text="10 - 15 triệu")
+        add_job(app, title="Content Writer", salary_text="20 - 30 triệu")
+        add_job(app, title="Content Creator", salary_text="Thoả thuận")
+        add_job(app, title="Social Media Executive", company_name="Công ty B", salary_text="8 - 9 triệu")
+        fake = fake_llm(monkeypatch, [sse(tool_call("market_stats", {"group_by": "company"})),
+                                      sse({"content": "ok"})])
+        events(client.post("/api/assistant/chat", json={"message": "công ty nào tuyển nhiều"}))
+        out = json.loads(fake.requests[1]["messages"][-1]["content"])
+        assert out["total_jobs"] == 4
+        top = out["groups"][0]
+        assert "ABC" in top["group"]  # tên công ty sau normalize_job
+        assert (top["jobs"], top["jobs_with_salary"], top["salary_low_vnd"], top["salary_median_vnd"],
+                top["salary_high_vnd"]) == (3, 2, 10_000_000, 15_000_000, 30_000_000)
+
+    def test_market_stats_rejects_bad_group(self, app, monkeypatch):
+        client = login(app)
+        fake = fake_llm(monkeypatch, [sse(tool_call("market_stats", {"group_by": "salary"})),
+                                      sse({"content": "ok"})])
+        events(client.post("/api/assistant/chat", json={"message": "x"}))
+        assert "group_by" in json.loads(fake.requests[1]["messages"][-1]["content"])["error"]
+
+    def test_web_search_sanitizes_cites_and_caches(self, app, monkeypatch):
+        monkeypatch.setenv("TAVILY_API_KEY", "tvly-test")
+        client = login(app)
+        tavily = {"results": [
+            {"title": "ABC review", "url": "https://itviec.com/companies/abc/review",
+             "content": "<b>Môi trường</b> tốt [xem thêm](https://evil.example/x) " + "x" * 600},
+            {"title": "không https", "url": "http://insecure.example/abc", "content": "bỏ"},
+        ]}
+        call = tool_call("company_web_search", {"company_name": "ABC", "topic": "reviews"})
+        fake = fake_llm(monkeypatch, [sse(call), sse({"content": "ok"}), sse(call), sse({"content": "ok"})],
+                        tavily=tavily)
+        ev = events(client.post("/api/assistant/chat", json={"message": "review ABC"}))
+        client.post("/api/assistant/chat", json={"message": "review ABC lần nữa"})
+        assert len(fake.posts) == 1  # lần 2 lấy cache
+        sent = fake.posts[0]
+        assert sent["country"] == "vietnam" and "itviec.com" in sent["include_domains"]
+        assert "ABC" in sent["query"]
+        tool_text = fake.requests[1]["messages"][-1]["content"]
+        assert tool_text.startswith("<search_results>") and tool_text.endswith("</search_results>")
+        data = json.loads(tool_text[len("<search_results>"):-len("</search_results>")])
+        assert [h["url"] for h in data["results"]] == ["https://itviec.com/companies/abc/review"]
+        snip = data["results"][0]["snippet"]
+        assert "<b>" not in snip and "evil.example" not in snip and len(snip) <= 500
+        start = [d for e, d in ev if e == "tool_start"][0]
+        assert start["label"] == "Em đang tra internet về ABC…"
+        end = [d for e, d in ev if e == "tool_end"][0]
+        assert end["sources"] == [{"title": "ABC review", "url": "https://itviec.com/companies/abc/review",
+                                   "domain": "itviec.com"}]
+        used = app.get_store().conn.execute("SELECT web_searches FROM assistant_usage").fetchone()[0]
+        assert used == 1
+
+    def test_web_search_unavailable_without_key_or_quota(self, app, monkeypatch):
+        client = login(app)
+        call = tool_call("company_web_search", {"company_name": "ABC", "topic": "overview"})
+        fake = fake_llm(monkeypatch, [sse(call), sse({"content": "ok"}), sse(call), sse({"content": "ok"})],
+                        tavily={"results": []})
+        events(client.post("/api/assistant/chat", json={"message": "ABC là công ty gì"}))
+        assert '"status": "unavailable"' in fake.requests[1]["messages"][-1]["content"]
+        monkeypatch.setenv("TAVILY_API_KEY", "tvly-test")
+        monkeypatch.setenv("ASSISTANT_DAILY_WEB_SEARCHES", "0")
+        events(client.post("/api/assistant/chat", json={"message": "ABC là công ty gì"}))
+        assert "hết lượt" in fake.requests[3]["messages"][-1]["content"]
+        assert fake.posts == []

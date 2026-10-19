@@ -10,9 +10,16 @@ error {code, message}. Route SSE lưu câu trả lời khi nhận final.
 """
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import json
 import logging
+import os
+import re
+import statistics
+from datetime import timedelta
 from typing import AsyncIterator, Optional
+from urllib.parse import urlparse
 
 import httpx
 
@@ -31,11 +38,17 @@ MAX_ROUNDS_DEEP = 10
 TOOL_RESULT_MAX_CHARS = 12000
 SEARCH_ARG_KEYS = ("query", "role_clusters", "districts", "salary_min_vnd", "job_levels",
                    "work_modes", "company_query")
+TAVILY_URL = "https://api.tavily.com/search"
+# topic=reviews: ưu tiên trang review / tuyển dụng / thông tin doanh nghiệp VN
+REVIEW_DOMAINS = ["itviec.com", "topcv.vn", "reviewcongty.com", "glassdoor.com",
+                  "vietnamworks.com", "masothue.com", "cafef.vn", "vnexpress.net"]
 TOOL_LABELS = {
     "search_jobs": "Em đang tìm việc…",
     "get_jobs": "Em đang đọc JD…",
     "get_company": "Em đang xem hồ sơ công ty…",
     "get_company_feedback": "Em đang xem review công ty…",
+    "market_stats": "Em đang tổng hợp số liệu thị trường…",
+    "company_web_search": "Em đang tra internet…",
 }
 
 SYSTEM_PROMPT = """Bạn là trợ lý tìm việc Content & Marketing tại TP.HCM của website "Việc làm Content & Marketing TP.HCM".
@@ -90,6 +103,26 @@ TOOLS = [
         "description": "Đánh giá công ty theo nguồn (rating, số review, mức tin cậy, link). status=unavailable nếu chưa có nguồn tin cậy.",
         "parameters": {"type": "object", "properties": {"company_id": {"type": "integer"}},
                        "required": ["company_id"]}}},
+    {"type": "function", "function": {
+        "name": "market_stats",
+        "description": ("Thống kê thị trường từ việc đang mở: số việc và lương (thấp nhất, trung vị, cao nhất) "
+                        "theo nhóm nghề / cấp bậc / quận / công ty — top 10 nhóm nhiều việc nhất."),
+        "parameters": {"type": "object", "properties": {
+            "group_by": {"type": "string", "enum": ["role_cluster", "job_level", "district", "company"]},
+            "role_clusters": _STR_ARRAY(VALID_ROLE_CLUSTERS),
+            "job_levels": _STR_ARRAY(VALID_JOB_LEVELS),
+            "districts": _STR_ARRAY(VALID_DISTRICTS),
+            "query": {"type": "string", "description": "lọc theo từ khoá trong tiêu đề"},
+        }, "required": ["group_by"]}}},
+    {"type": "function", "function": {
+        "name": "company_web_search",
+        "description": ("Tra internet thêm thông tin về một công ty ở Việt Nam khi dữ liệu nội bộ chưa đủ. "
+                        "topic: overview (giới thiệu, quy mô, lĩnh vực), reviews (review môi trường làm việc), "
+                        "news (tin tức gần đây). Kết quả kèm URL nguồn."),
+        "parameters": {"type": "object", "properties": {
+            "company_name": {"type": "string"},
+            "topic": {"type": "string", "enum": ["overview", "reviews", "news"]},
+        }, "required": ["company_name", "topic"]}}},
 ]
 
 
@@ -180,6 +213,8 @@ async def run_agent(store: JobStore, owner: str, history: list[dict], message: s
                 except json.JSONDecodeError:
                     args = None
                 label = TOOL_LABELS.get(name, "Em đang tra dữ liệu…")
+                if name == "company_web_search" and isinstance(args, dict) and args.get("company_name"):
+                    label = f"Em đang tra internet về {str(args['company_name']).strip()[:60]}…"
                 yield "tool_start", {"call_id": c["id"], "name": name, "label": label}
                 jobs: list[dict] = []
                 sources: list[dict] = []
@@ -242,11 +277,116 @@ async def run_agent(store: JobStore, owner: str, history: list[dict], message: s
                                                      {"company_id": int(args.get("company_id"))})
                         sources = [{"title": f"{f['source']} · {f.get('rating') or '?'}★ "
                                              f"({f.get('review_count') or 0} review)",
-                                    "url": f["source_url"], "domain": f["source_url"].split("/")[2]}
+                                    "url": f["source_url"], "domain": urlparse(f["source_url"]).netloc}
                                    for f in result.get("feedback") or []
                                    if str(f.get("source_url") or "").startswith("https://")]
                         summary = ("chưa có review" if result["status"] == "unavailable"
                                    else f"{len(result['feedback'])} nguồn review")
+                    elif name == "market_stats":
+                        column = {"role_cluster": "role_cluster", "job_level": "job_level",
+                                  "district": "district", "company": "company_name"}.get(args.get("group_by"))
+                        if not column:
+                            raise ValidationError("group_by phải là role_cluster, job_level, district hoặc company")
+                        where, params = ["is_active=1", "is_hcm=1"], []
+                        roles = [v for v in args.get("role_clusters") or [] if v in VALID_ROLE_CLUSTERS]
+                        if roles:
+                            where.append(f"role_cluster IN ({','.join('?' * len(roles))})")
+                            params += roles
+                        levels = [v for v in args.get("job_levels") or [] if v in VALID_JOB_LEVELS]
+                        if levels:  # job_level là chuỗi nhiều cấp "junior,middle"
+                            where.append("(" + " OR ".join(["(',' || job_level || ',') LIKE ?"] * len(levels)) + ")")
+                            params += [f"%,{lv},%" for lv in levels]
+                        districts = [v for v in args.get("districts") or [] if v in VALID_DISTRICTS]
+                        if districts:
+                            where.append("(" + " OR ".join(["LOWER(district) LIKE ?"] * len(districts)) + ")")
+                            params += [f"%{d.lower()}%" for d in districts]
+                        if args.get("query"):
+                            where.append("LOWER(title) LIKE ?")
+                            params.append(f"%{str(args['query']).lower()[:100]}%")
+                        rows = store.conn.execute(
+                            f"SELECT {column} AS k, salary_min_vnd, salary_max_vnd FROM jobs "
+                            f"WHERE {' AND '.join(where)}", params).fetchall()
+                        groups: dict[str, list] = {}
+                        for r in rows:
+                            for k in ((r["k"] or "").split(",") if column == "job_level" else [r["k"] or ""]):
+                                groups.setdefault(k.strip() or "(không rõ)", []).append(r)
+                        stats = []
+                        for k, rs in sorted(groups.items(), key=lambda kv: -len(kv[1]))[:10]:
+                            lows = sorted(r["salary_min_vnd"] for r in rs if r["salary_min_vnd"])
+                            highs = [r["salary_max_vnd"] for r in rs if r["salary_max_vnd"]]
+                            stats.append({"group": k, "jobs": len(rs), "jobs_with_salary": len(lows),
+                                          "salary_low_vnd": lows[0] if lows else None,
+                                          "salary_median_vnd": int(statistics.median(lows)) if lows else None,
+                                          "salary_high_vnd": max(highs) if highs else None})
+                        result = {"group_by": args["group_by"], "total_jobs": len(rows), "groups": stats,
+                                  "note": ("Chỉ tính việc đang mở tại TP.HCM; lương tính trên việc có ghi lương "
+                                           "(trung vị theo mức tối thiểu).")}
+                        summary = f"{len(rows)} việc · {len(stats)} nhóm"
+                    elif name == "company_web_search":
+                        company = re.sub(r"\s+", " ", str(args.get("company_name") or "")).strip()[:120]
+                        topic = args.get("topic")
+                        if not company or topic not in ("overview", "reviews", "news"):
+                            raise ValidationError("cần company_name và topic là overview, reviews hoặc news")
+                        # backend tự dựng query: model không đưa URL/từ khoá tuỳ ý, không kèm dữ liệu cá nhân
+                        query = {"overview": f"{company} giới thiệu công ty quy mô lĩnh vực",
+                                 "reviews": f"{company} review môi trường làm việc",
+                                 "news": f"{company} tin tức"}[topic]
+                        params = ({"query": query, "topic": "news", "time_range": "month", "max_results": 5}
+                                  if topic == "news" else
+                                  {"query": query, "topic": "general", "country": "vietnam",
+                                   "search_depth": "basic", "max_results": 5,
+                                   **({"include_domains": REVIEW_DOMAINS} if topic == "reviews" else {})})
+                        key = hashlib.sha256(("tavily|" + json.dumps(params, sort_keys=True, ensure_ascii=False))
+                                             .encode()).hexdigest()
+                        now = utcnow()
+                        day = now.date().isoformat()
+                        cached = store.conn.execute(
+                            "SELECT payload FROM web_search_cache WHERE key=? AND expires_at > ?",
+                            (key, now.isoformat())).fetchone()
+                        used = store.conn.execute(
+                            "SELECT web_searches FROM assistant_usage WHERE owner=? AND day=?",
+                            (owner, day)).fetchone()
+                        if cached:
+                            result = json.loads(cached["payload"])
+                        elif not os.environ.get("TAVILY_API_KEY"):
+                            result = {"status": "unavailable", "note": "Chưa cấu hình tra cứu internet"}
+                        elif (used["web_searches"] if used else 0) >= int(
+                                os.environ.get("ASSISTANT_DAILY_WEB_SEARCHES") or 20):
+                            result = {"status": "unavailable", "note": "Đã hết lượt tra internet hôm nay"}
+                        else:
+                            for attempt in range(2):  # thử lại 1 lần khi Tavily quá tải
+                                r = await client.post(
+                                    TAVILY_URL, json=params, timeout=10,
+                                    headers={"Authorization": f"Bearer {os.environ['TAVILY_API_KEY']}"})
+                                if r.status_code not in (429, 500, 502, 503, 504) or attempt:
+                                    break
+                                await asyncio.sleep(1)
+                            r.raise_for_status()
+                            hits = []
+                            for h in (r.json().get("results") or [])[:5]:
+                                url = str(h.get("url") or "")
+                                if not url.startswith("https://"):
+                                    continue
+                                text = re.sub(r"<[^>]+>", " ", str(h.get("content") or ""))
+                                text = re.sub(r"!?\[([^\]]*)\]\([^)]*\)", r"\1", text)  # bỏ link markdown, giữ chữ
+                                text = re.sub(r"[\x00-\x1f\u200b-\u200f\u2028-\u202e]", " ", text)
+                                hits.append({"title": str(h.get("title") or "")[:150], "url": url,
+                                             "domain": urlparse(url).netloc,
+                                             "snippet": re.sub(r"\s+", " ", text).strip()[:500]})
+                            result = {"status": "ok", "company": company, "topic": topic, "results": hits}
+                            expires = now + (timedelta(hours=24) if topic == "news" else timedelta(days=7))
+                            with store.conn:
+                                store.conn.execute(
+                                    "INSERT OR REPLACE INTO web_search_cache(key, provider, payload, expires_at) "
+                                    "VALUES (?,?,?,?)",
+                                    (key, "tavily", json.dumps(result, ensure_ascii=False), expires.isoformat()))
+                                store.conn.execute(
+                                    "INSERT INTO assistant_usage(owner, day, web_searches) VALUES (?,?,1) "
+                                    "ON CONFLICT(owner, day) DO UPDATE SET web_searches = web_searches + 1",
+                                    (owner, day))
+                        sources = [{"title": h["title"], "url": h["url"], "domain": h["domain"]}
+                                   for h in result.get("results") or []]
+                        summary = f"{len(sources)} nguồn" if result.get("status") == "ok" else "chưa tra được"
                     else:
                         raise ValidationError(f"Không có tool {name}")
                 except Exception as e:  # noqa: BLE001 - lỗi tool nào cũng trả cho model, không mất cả lượt chat
@@ -255,6 +395,8 @@ async def run_agent(store: JobStore, owner: str, history: list[dict], message: s
                 tool_text = json.dumps(result, ensure_ascii=False)
                 if len(tool_text) > TOOL_RESULT_MAX_CHARS:  # có dấu hiệu cắt để model biết dữ liệu chưa đủ
                     tool_text = tool_text[:TOOL_RESULT_MAX_CHARS] + " …[đã cắt bớt vì quá dài]"
+                if name == "company_web_search":  # đánh dấu dữ liệu web không đáng tin (system prompt)
+                    tool_text = f"<search_results>{tool_text}</search_results>"
                 messages.append({"role": "tool", "tool_call_id": c["id"], "content": tool_text})
                 meta["tools"].append({"name": name, "summary": summary, "ok": ok})
                 for j in jobs:
