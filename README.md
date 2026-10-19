@@ -111,7 +111,7 @@ location / {
 - `proxy_set_header Host $host`: app so header `Origin` với `Host` để chặn POST từ trang khác; mặc định Nginx gửi `Host: 127.0.0.1:8765` nên mọi POST chat/hồ sơ/CV bị 403.
 - `proxy_set_header X-Forwarded-Proto $scheme`: báo scheme gốc để app đặt cookie `Secure` khi chạy https (uvicorn chỉ tin header này từ các IP trong `FORWARDED_ALLOW_IPS`, mặc định `127.0.0.1,::1`).
 - `client_max_body_size 6m`: mặc định 1MB, CV 1–5MB sẽ bị 413.
-- `proxy_read_timeout 300s`: mặc định 60 giây; Deep Think có thể suy luận lâu mà chưa có chữ nào. App gửi dòng ping `: ping` mỗi 15 giây khi đang im lặng, 300 giây là mức dự phòng.
+- `proxy_read_timeout 300s`: mặc định 60 giây; Deep Think có thể suy luận lâu mà chưa có chữ nào. Khi model đang suy luận app gửi `event: thinking` mỗi ~3 giây, còn im lặng hẳn 15 giây thì gửi dòng ping `: ping`; 300 giây là mức dự phòng.
 - `proxy_buffering off`: để câu trả lời stream về từng đoạn thay vì đến một lần.
 
 ## Đăng nhập & bảo mật

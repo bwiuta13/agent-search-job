@@ -221,7 +221,8 @@ async def assistant_chat(request: Request, owner: str = Depends(chat_owner)):
                 (day,)).fetchone()[0] >= int(os.environ.get("ASSISTANT_GUEST_DAILY_MESSAGES") or 300)):
         raise HTTPException(429, "Hôm nay công chúa hỏi em nhiều quá rồi, mai mình nói tiếp nha 💐")
     conv_id = body.get("conversation_id")
-    if conv_id is not None:
+    new_conv = conv_id is None
+    if not new_conv:
         conv = store.conn.execute("SELECT id, title FROM chat_conversations WHERE id=? AND owner=?",
                                   (conv_id, owner)).fetchone()
         if not conv:
@@ -239,9 +240,9 @@ async def assistant_chat(request: Request, owner: str = Depends(chat_owner)):
                 (owner, title, now, now)).lastrowid
         history = []
     with store.conn:
-        store.conn.execute(
+        user_mid = store.conn.execute(
             "INSERT INTO chat_messages(conversation_id, role, content, created_at) VALUES (?,?,?,?)",
-            (conv_id, "user", message, now))
+            (conv_id, "user", message, now)).lastrowid
         store.conn.execute("UPDATE chat_conversations SET updated_at=? WHERE id=?", (now, conv_id))
         store.conn.execute(
             "INSERT INTO assistant_usage(owner, day, messages) VALUES (?,?,1) "
@@ -250,8 +251,9 @@ async def assistant_chat(request: Request, owner: str = Depends(chat_owner)):
                                  (owner,)).fetchone()
 
     async def stream():
-        yield f"event: conversation\ndata: {json.dumps({'id': conv_id, 'title': title}, ensure_ascii=False)}\n\n"
+        answered = False
         try:
+            yield f"event: conversation\ndata: {json.dumps({'id': conv_id, 'title': title}, ensure_ascii=False)}\n\n"
             async for name, data in run_agent(store, owner, history, message,
                                               dict(profile) if profile else None, deep_think):
                 if name == "final":
@@ -264,6 +266,7 @@ async def assistant_chat(request: Request, owner: str = Depends(chat_owner)):
                              json.dumps(data["meta"], ensure_ascii=False), ts)).lastrowid
                         store.conn.execute("UPDATE chat_conversations SET updated_at=? WHERE id=?",
                                            (ts, conv_id))
+                    answered = True
                     name, data = "done", {"message_id": mid}
                 elif name == "ping":  # comment SSE: giữ kết nối qua proxy, chat.js bỏ qua (không có dòng event:)
                     yield ": ping\n\n"
@@ -273,7 +276,18 @@ async def assistant_chat(request: Request, owner: str = Depends(chat_owner)):
             log.exception("assistant chat failed")
             err = {"code": "llm_error", "message": "Em gặp lỗi rồi, công chúa thử lại giúp em nha 🥺"}
             yield f"event: error\ndata: {json.dumps(err, ensure_ascii=False)}\n\n"
+        finally:
+            # Lỗi / bấm Dừng / rớt mạng: bỏ câu hỏi chưa có trả lời (lịch sử chỉ giữ lượt trọn vẹn, "Thử lại"
+            # không thành 2 câu hỏi trùng, model không thấy 2 câu user liền nhau); hội thoại vừa tạo mà trống thì
+            # bỏ luôn (chat.js cũng quên id của nó)
+            if not answered:
+                with store.conn:
+                    store.conn.execute("DELETE FROM chat_messages WHERE id=?", (user_mid,))
+                    if new_conv:
+                        store.conn.execute(
+                            "DELETE FROM chat_conversations WHERE id=? AND NOT EXISTS "
+                            "(SELECT 1 FROM chat_messages WHERE conversation_id=?)", (conv_id, conv_id))
 
-    # Client đóng tab/bấm Dừng -> Starlette ngừng gọi generator, câu trả lời dở không được lưu
+    # Client đóng tab/bấm Dừng -> Starlette ngừng gọi generator (finally ở trên vẫn chạy), câu trả lời dở không được lưu
     return StreamingResponse(stream(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

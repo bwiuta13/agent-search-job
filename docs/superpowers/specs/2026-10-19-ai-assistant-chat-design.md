@@ -38,7 +38,7 @@ Voice (nói → chữ), TTS, lip-sync, model nhân vật 3D thật, upload ảnh
 ```text
 Trình duyệt (/assistant)
   chat.js ──POST /api/assistant/chat {conversation_id?, message, deep_think}──▶ FastAPI
-          ◀── SSE: conversation · tool_start · tool_end · token… · done | error ──
+          ◀── SSE: conversation · thinking · tool_start · tool_end · token… · done | error ──
   stage.js (Three.js: orb + avatar slot, setState theo sự kiện SSE)
 
 FastAPI (web/assistant_routes.py)
@@ -170,8 +170,9 @@ Tất cả dưới `current_user` (cookie session hoặc bearer); khách (public
 | Event | Data |
 |---|---|
 | `conversation` | `{id, title}` (luôn là event đầu) |
+| `thinking` | `{}` — model đang suy luận (`reasoning_content`), tối đa 1 lần / 3 giây, chỉ trước token đầu của vòng; không gửi nội dung suy luận. UI hiện dòng tạm "Em đang suy nghĩ… N giây" ở đáy tin nhắn |
 | `tool_start` | `{call_id, name, label}` |
-| `tool_end` | `{call_id, name, ok, summary, jobs?: [...], sources?: [...]}` |
+| `tool_end` | `{call_id, name, ok, summary, jobs?: [...], sources?: [...]}` — chỉ thẻ/nguồn **mới** được thêm vào `meta` (bỏ trùng, tối đa 12 thẻ mỗi câu trả lời) nên UI lúc stream = lúc mở lại |
 | `token` | `{text}` |
 | `done` | `{message_id}` |
 | `error` | `{code, message}` (`llm_not_configured`, `llm_error`) |
@@ -180,7 +181,7 @@ Lỗi xác định được **trước khi** stream (body sai → 400, vượt q
 
 Response dùng `StreamingResponse(media_type="text/event-stream")` với header `Cache-Control: no-cache`, `X-Accel-Buffering: no` (Nginx trên GCE không buffer).
 
-**Keep-alive**: khi model chỉ đang suy luận (`reasoning_content`) hoặc gom `tool_calls` mà ≥ 15 giây chưa gửi gì xuống client, `run_agent` phát `("ping", {})` ở delta kế tiếp và route ghi **dòng comment SSE** `: ping\n\n` (không có dòng `event:`); `chat.js` bỏ qua khối không có `event:`. Mục đích: `proxy_read_timeout` của Nginx (mặc định 60 giây) không cắt vòng Deep Think.
+**Keep-alive**: khi model đang suy luận thì event `thinking` (3 giây/lần) đã giữ kết nối; khi model gom `tool_calls` (hoặc gửi delta rỗng) mà ≥ 15 giây chưa gửi gì xuống client, `run_agent` phát `("ping", {})` ở delta kế tiếp và route ghi **dòng comment SSE** `: ping\n\n` (không có dòng `event:`); `chat.js` bỏ qua khối không có `event:`. Mục đích: `proxy_read_timeout` của Nginx (mặc định 60 giây) không cắt vòng Deep Think.
 
 **Yêu cầu Nginx** (README mục "Nginx cho Trợ lý AI"): `proxy_set_header Host $host` (kiểm tra `Origin` so với `Host`; mặc định Nginx gửi `127.0.0.1:8765` → mọi POST 403), `proxy_set_header X-Forwarded-Proto $scheme`, `client_max_body_size 6m` (mặc định 1MB → CV bị 413, `chat.js` báo "File CV tối đa 5MB thôi ạ"), `proxy_read_timeout 300s`, `proxy_buffering off`.
 
@@ -263,7 +264,8 @@ CREATE TABLE IF NOT EXISTS assistant_usage (
 | Tình huống | Hành vi |
 |---|---|
 | Chưa có `OPENAI_API_KEY` | event `error{code:"llm_not_configured", message:"Em chưa được kết nối AI ạ"}` |
-| LLM lỗi/timeout giữa chừng | giữ phần đã stream trên UI, event `error{code:"llm_error"}`, UI hiện nút "Thử lại" (gửi lại câu hỏi cuối); không lưu câu trả lời dở; backend ghi `log.warning` kèm traceback và mã HTTP của LLM (nếu có) |
+| LLM lỗi/timeout giữa chừng | giữ phần đã stream trên UI, event `error{code:"llm_error"}`, UI hiện nút "Thử lại" (gỡ cặp tin nhắn hỏng rồi gửi lại câu hỏi); không lưu câu trả lời dở; backend ghi `log.warning` kèm traceback và mã HTTP của LLM (nếu có) |
+| Lượt không trọn (lỗi, bấm Dừng, rớt mạng) | route xoá luôn câu hỏi của lượt đó (lịch sử chỉ giữ lượt trọn vẹn: "Thử lại" không thành câu hỏi trùng, model không thấy 2 câu user liền nhau); hội thoại vừa tạo ở lượt đó mà trống thì xoá luôn, `chat.js` quên id của nó. Bước tool còn "◌" chuyển sang "!" |
 | Stream đóng mà không có `done`/`error` (proxy cắt, restart, rớt mạng) | `chat.js` coi là lỗi chung: hiện thông báo + "Thử lại" |
 | Chat trả 404 (hội thoại đã hết hạn/bị xoá) | `chat.js` bỏ `conversation_id` cũ nên "Thử lại" mở hội thoại mới |
 | Bấm Enter khi đang stream | không làm gì; chỉ nút "Dừng" mới ngắt câu trả lời |
@@ -288,7 +290,7 @@ CREATE TABLE IF NOT EXISTS assistant_usage (
 6. Phân quyền: user B không đọc/xoá được hội thoại của A (404); khách nhận cookie `vnjobs_guest` và chỉ thấy hội thoại của mình.
 7. TTL: hội thoại có `updated_at` cũ hơn 24 giờ biến mất ở lần gọi API kế tiếp và khi app khởi động (lifespan); hồ sơ user đăng nhập vẫn còn, hồ sơ khách cũ bị xoá.
 8. Rate limit: vượt quota tin nhắn → 429; hai khách khác cookie cùng bị trần chung `ASSISTANT_GUEST_DAILY_MESSAGES` / `ASSISTANT_GUEST_DAILY_WEB_SEARCHES` (người đăng nhập không bị ảnh hưởng).
-9. LLM chưa cấu hình → event `error llm_not_configured`; LLM lỗi (ConnectError, HTTP 401) → `log.warning` kèm mã HTTP; reasoning im lặng quá 15 giây (đồng hồ giả) → dòng `: ping`, chuỗi event không đổi.
+9. LLM chưa cấu hình → event `error llm_not_configured`; LLM lỗi (ConnectError, HTTP 401) → `log.warning` kèm mã HTTP; suy luận (đồng hồ giả) → `thinking` thưa 3 giây/lần, không lộ nội dung; gom `tool_calls` im lặng quá 15 giây → dòng `: ping`, chuỗi event không đổi; lượt lỗi không để lại câu hỏi, "Thử lại" không trùng.
 10. `scripts/purge.py`: file backup không còn chat và hồ sơ khách (đã VACUUM), hồ sơ người đăng nhập giữ nguyên; DB chính giữ chat còn hạn.
 
 Frontend: kiểm tra bằng trình duyệt tích hợp (preview `web-pink-preview`, cổng 8766): trạng thái trống, đang stream (orb đổi state, thẻ job, nguồn), mobile 375px, console không lỗi, giả lập không WebGL → orb CSS.

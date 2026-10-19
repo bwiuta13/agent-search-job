@@ -414,11 +414,11 @@ class TestChat:
         r = client.post("/api/assistant/chat", json={"message": "tìm việc content"})
         assert r.status_code == 200 and r.headers["content-type"].startswith("text/event-stream")
         ev = events(r)
-        assert [e for e, _ in ev] == ["conversation", "token", "token", "tool_start", "tool_end",
+        assert [e for e, _ in ev] == ["conversation", "thinking", "token", "token", "tool_start", "tool_end",
                                       "token", "done"]
-        assert ev[3][1]["label"] == "Em đang tìm việc…"
-        card = ev[4][1]["jobs"][0]
-        assert ev[4][1]["ok"] and card["job_id"] == jid and card["url"] == f"/jobs/{jid}"
+        assert ev[4][1]["label"] == "Em đang tìm việc…"
+        card = ev[5][1]["jobs"][0]
+        assert ev[5][1]["ok"] and card["job_id"] == jid and card["url"] == f"/jobs/{jid}"
         assert fake.requests[0]["tools"] and fake.requests[0]["stream"] is True
         assert fake.requests[0]["tool_choice"] == "auto"
         sent = fake.requests[1]["messages"]
@@ -500,8 +500,9 @@ class TestChat:
         ev = events(client.post("/api/assistant/chat", json={"message": "x"}))
         assert [e for e, _ in ev] == ["conversation", "error"]
         assert ev[1][1]["code"] == "llm_not_configured"
-        conv = client.get(f"/api/assistant/conversations/{ev[0][1]['id']}").json()
-        assert [m["role"] for m in conv["messages"]] == ["user"]
+        # lượt đầu hỏng: không giữ câu hỏi lẻ, hội thoại vừa tạo cũng bỏ luôn
+        assert client.get(f"/api/assistant/conversations/{ev[0][1]['id']}").status_code == 404
+        assert client.get("/api/assistant/conversations").json()["items"] == []
 
     def test_llm_connection_error(self, app, monkeypatch):
         import httpx
@@ -526,23 +527,76 @@ class TestChat:
         assert [(r.levelno, r.getMessage(), r.exc_info is not None) for r in recs] == [
             (logging.WARNING, f"assistant LLM call failed (status {status})", True)]
 
-    def test_silent_reasoning_sends_ping_comments_without_changing_events(self, app, monkeypatch):
+    def test_reasoning_sends_throttled_thinking_events_instead_of_pings(self, app, monkeypatch):
         import agent_search_job.assistant.agent as agent
         client = login(app)
         thinking = [{"reasoning_content": f"nghĩ {i} "} for i in range(8)]
-        # đồng hồ giả nhảy 6 giây mỗi lần đọc: reasoning-only kéo dài > 15 giây thì phải có ping
-        ticks = itertools.count(6, 6)
+        # đồng hồ giả nhảy 1 giây mỗi dòng: suy luận ở giây 2..9 -> báo ở giây 2, 5, 8 (THINKING_EVERY_SECONDS=3)
+        ticks = itertools.count(1)
         monkeypatch.setattr(agent, "time", types.SimpleNamespace(monotonic=lambda: next(ticks)))
-        fake_llm(monkeypatch, [sse(*thinking, {"content": "Dạ em đây"})])
+        fake_llm(monkeypatch, [sse(*thinking, {"content": "Dạ em đây"}, {"reasoning_content": "nghĩ sau khi đã trả lời"})])
         r = client.post("/api/assistant/chat", json={"message": "x"})
-        assert r.text.count(": ping\n\n") >= 1 and "event: ping" not in r.text
-        assert r.text.index(": ping\n\n") < r.text.index("event: token")
-        assert [e for e, _ in events(r)] == ["conversation", "token", "done"]
-        # đồng hồ đứng yên: không có ping
+        assert [e for e, _ in events(r)] == ["conversation", "thinking", "thinking", "thinking", "token", "done"]
+        assert events(r)[1][1] == {} and "nghĩ" not in r.text  # chỉ báo, không lộ nội dung suy luận
+        assert ": ping" not in r.text  # thinking đã giữ kết nối
+        # đồng hồ đứng yên: chỉ báo 1 lần ngay đoạn suy luận đầu
         monkeypatch.setattr(agent, "time", types.SimpleNamespace(monotonic=lambda: 0.0))
         fake_llm(monkeypatch, [sse(*thinking, {"content": "Dạ em đây"})])
         r = client.post("/api/assistant/chat", json={"message": "x"})
-        assert ": ping" not in r.text and [e for e, _ in events(r)] == ["conversation", "token", "done"]
+        assert [e for e, _ in events(r)] == ["conversation", "thinking", "token", "done"]
+
+    def test_silent_tool_call_streaming_sends_ping_comments_without_changing_events(self, app, monkeypatch):
+        import agent_search_job.assistant.agent as agent
+        client = login(app)
+        # model gom arguments tool_call nhiều giây, không có token/suy luận: im lặng > 15 giây thì phải có ping
+        chunks = [{"tool_calls": [{"index": 0, "id": "call_a", "type": "function",
+                                   "function": {"name": "search_jobs", "arguments": ""}}]}]
+        chunks += [{"tool_calls": [{"index": 0, "function": {"arguments": part}}]}
+                   for part in ['{"query"', ': "con', 'tent', '"}']]
+        ticks = itertools.count(6, 6)
+        monkeypatch.setattr(agent, "time", types.SimpleNamespace(monotonic=lambda: next(ticks)))
+        fake_llm(monkeypatch, [sse(*chunks), sse({"content": "Dạ em đây"})])
+        r = client.post("/api/assistant/chat", json={"message": "x"})
+        assert r.text.count(": ping\n\n") >= 1 and "event: ping" not in r.text
+        assert r.text.index(": ping\n\n") < r.text.index("event: tool_start")
+        assert [e for e, _ in events(r)] == ["conversation", "tool_start", "tool_end", "token", "done"]
+        # đồng hồ đứng yên: không có ping
+        monkeypatch.setattr(agent, "time", types.SimpleNamespace(monotonic=lambda: 0.0))
+        fake_llm(monkeypatch, [sse(*chunks), sse({"content": "Dạ em đây"})])
+        r = client.post("/api/assistant/chat", json={"message": "x"})
+        assert ": ping" not in r.text
+        assert [e for e, _ in events(r)] == ["conversation", "tool_start", "tool_end", "token", "done"]
+
+    def test_failed_turn_is_dropped_so_retry_does_not_duplicate_the_question(self, app, monkeypatch):
+        client = login(app)
+        fake = fake_llm(monkeypatch, [sse({"content": "Dạ 1"}), httpx.ConnectError("down"), sse({"content": "Dạ 2"})])
+        cid = events(client.post("/api/assistant/chat", json={"message": "câu 1"}))[0][1]["id"]
+        ev = events(client.post("/api/assistant/chat", json={"message": "câu 2", "conversation_id": cid}))
+        assert ev[-1][0] == "error"
+        conv = client.get(f"/api/assistant/conversations/{cid}").json()
+        assert [(m["role"], m["content"]) for m in conv["messages"]] == [("user", "câu 1"), ("assistant", "Dạ 1")]
+        # "Thử lại": gửi lại đúng câu đó -> model và lịch sử chỉ thấy câu hỏi 1 lần
+        assert events(client.post("/api/assistant/chat", json={"message": "câu 2", "conversation_id": cid}))[-1][0] == "done"
+        assert [(m["role"], m["content"]) for m in fake.requests[2]["messages"][1:]] == [
+            ("user", "câu 1"), ("assistant", "Dạ 1"), ("user", "câu 2")]
+        conv = client.get(f"/api/assistant/conversations/{cid}").json()
+        assert [(m["role"], m["content"]) for m in conv["messages"]] == [
+            ("user", "câu 1"), ("assistant", "Dạ 1"), ("user", "câu 2"), ("assistant", "Dạ 2")]
+
+    def test_streamed_cards_match_saved_cards(self, app, monkeypatch):
+        import agent_search_job.assistant.agent as agent
+        monkeypatch.setattr(agent, "MAX_JOB_CARDS", 3)
+        client = login(app)
+        ids = [add_job(app, title=f"Content Writer {i}", source_job_id=str(i)) for i in range(4)]
+        fake_llm(monkeypatch, [sse(tool_call("search_jobs", {"query": "content"}, "c1")),
+                               sse(tool_call("get_jobs", {"job_ids": [ids[0], ids[0]]}, "c2")),
+                               sse({"content": "ok"})])
+        ev = events(client.post("/api/assistant/chat", json={"message": "x"}))
+        ends = [d for e, d in ev if e == "tool_end"]
+        # lần 1: 4 việc nhưng chỉ 3 thẻ (giới hạn); lần 2: việc đã có thẻ -> không gửi lại
+        assert [len(d["jobs"]) for d in ends] == [3, 0] and ends[0]["summary"] == "4 kết quả"
+        conv = client.get(f"/api/assistant/conversations/{ev[0][1]['id']}").json()
+        assert conv["messages"][1]["meta"]["jobs"] == ends[0]["jobs"]
 
     def test_validation_and_ownership(self, app, monkeypatch):
         monkeypatch.delenv("OPENAI_API_KEY")

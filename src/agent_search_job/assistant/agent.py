@@ -5,9 +5,10 @@ Vòng lặp (spec docs/superpowers/specs/2026-10-19-ai-assistant-chat-design.md 
 (role=tool) -> lặp tới khi model trả lời chữ. Tối đa MAX_ROUNDS vòng có tool (Deep Think:
 MAX_ROUNDS_DEEP); hết vòng thì gọi một lần không kèm tools để model buộc phải trả lời.
 
-run_agent sinh (event, data): token, tool_start, tool_end, final {content, meta}, error {code, message}
-hoặc ping {} (giữ kết nối: model chỉ đang suy luận/gom tool_calls, chưa có gì để gửi client; route SSE
-đổi thành dòng comment `: ping`). Route SSE lưu câu trả lời khi nhận final.
+run_agent sinh (event, data): thinking {} (model đang suy luận, tối đa 1 lần mỗi THINKING_EVERY_SECONDS),
+token, tool_start, tool_end, final {content, meta}, error {code, message} hoặc ping {} (giữ kết nối: model
+đang gom tool_calls, chưa có gì để gửi client; route SSE đổi thành dòng comment `: ping`). Route SSE lưu
+câu trả lời khi nhận final.
 """
 from __future__ import annotations
 
@@ -39,6 +40,8 @@ MAX_ROUNDS = 6
 MAX_ROUNDS_DEEP = 10
 TOOL_RESULT_MAX_CHARS = 12000
 PING_AFTER_SECONDS = 15  # im lặng với client quá ngần này giây thì phát ping (proxy_read_timeout của Nginx)
+THINKING_EVERY_SECONDS = 3  # GLM suy luận cả phút trước khi trả lời: báo "đang suy nghĩ" thưa thôi
+MAX_JOB_CARDS = 12  # thẻ job tối đa mỗi câu trả lời (lúc stream và khi mở lại hội thoại như nhau)
 SEARCH_ARG_KEYS = ("query", "role_clusters", "districts", "salary_min_vnd", "job_levels",
                    "work_modes", "company_query")
 # company_web_search: một lượt GLM riêng (cùng cấu hình LLM trong .env) bật tool web_search tích hợp
@@ -172,6 +175,7 @@ async def run_agent(store: JobStore, owner: str, history: list[dict], message: s
                 body["tool_choice"] = "auto"
             content, reasoning, calls = "", "", {}
             last_sent = time.monotonic()  # lần cuối có gì gửi xuống client trong vòng stream này
+            last_thinking = float("-inf")  # đoạn suy luận đầu tiên của vòng báo ngay
             try:
                 async with client.stream("POST", f"{cfg.base_url}/chat/completions",
                                          headers=headers, json=body) as resp:
@@ -182,25 +186,31 @@ async def run_agent(store: JobStore, owner: str, history: list[dict], message: s
                         data = line[5:].strip()
                         if data == "[DONE]":
                             break
+                        now = time.monotonic()
                         choices = json.loads(data).get("choices") or []
                         delta = (choices[0].get("delta") or {}) if choices else {}
                         # GLM luôn bật thinking: Z.ai/SGLang trả reasoning_content, vLLM mới trả reasoning
-                        reasoning += delta.get("reasoning_content") or delta.get("reasoning") or ""
+                        thought = delta.get("reasoning_content") or delta.get("reasoning") or ""
+                        reasoning += thought
+                        if thought and not content and now - last_thinking >= THINKING_EVERY_SECONDS:
+                            # không gửi nội dung suy luận, chỉ báo để UI hiện "Em đang suy nghĩ…" thay vì im lặng
+                            yield "thinking", {}
+                            last_thinking = last_sent = now
                         if delta.get("content"):
                             content += delta["content"]
                             yield "token", {"text": delta["content"]}
-                            last_sent = time.monotonic()
+                            last_sent = now
                         for tc in delta.get("tool_calls") or []:
                             slot = calls.setdefault(tc.get("index", 0), {"id": "", "name": "", "arguments": ""})
                             fn = tc.get("function") or {}
                             slot["id"] = tc.get("id") or slot["id"]
                             slot["name"] = fn.get("name") or slot["name"]
                             slot["arguments"] += fn.get("arguments") or ""
-                        if time.monotonic() - last_sent >= PING_AFTER_SECONDS:
-                            # Deep Think suy luận / gom tool_calls nhiều giây mà không có token: gửi ping để
-                            # Nginx (proxy_read_timeout) và trình duyệt không cắt kết nối đang im lặng
+                        if now - last_sent >= PING_AFTER_SECONDS:
+                            # gom tool_calls nhiều giây mà không có token/suy luận: gửi ping để Nginx
+                            # (proxy_read_timeout) và trình duyệt không cắt kết nối đang im lặng
                             yield "ping", {}
-                            last_sent = time.monotonic()
+                            last_sent = now
             except (httpx.HTTPError, json.JSONDecodeError, AttributeError) as e:
                 log.warning("assistant LLM call failed (status %s)",
                             getattr(getattr(e, "response", None), "status_code", None), exc_info=True)
@@ -437,14 +447,19 @@ async def run_agent(store: JobStore, owner: str, history: list[dict], message: s
                                  + "</search_results>")
                 messages.append({"role": "tool", "tool_call_id": c["id"], "content": tool_text})
                 meta["tools"].append({"name": name, "summary": summary, "ok": ok})
+                # tool_end chỉ mang thẻ/nguồn mới vào meta (bỏ trùng, tối đa MAX_JOB_CARDS thẻ): UI lúc stream
+                # hiện đúng những gì được lưu, mở lại hội thoại thấy y như cũ
+                new_jobs, new_sources = [], []
                 for j in jobs:
-                    if len(meta["jobs"]) < 12 and all(x["job_id"] != j["job_id"] for x in meta["jobs"]):
+                    if len(meta["jobs"]) < MAX_JOB_CARDS and all(x["job_id"] != j["job_id"] for x in meta["jobs"]):
                         meta["jobs"].append(j)
+                        new_jobs.append(j)
                 for s in sources:
                     if all(x["url"] != s["url"] for x in meta["sources"]):
                         meta["sources"].append(s)
+                        new_sources.append(s)
                 yield "tool_end", {"call_id": c["id"], "name": name, "ok": ok, "summary": summary,
-                                   "jobs": jobs, "sources": sources}
+                                   "jobs": new_jobs, "sources": new_sources}
     if not answer.strip():
         answer = "Dạ em xin lỗi, em chưa trả lời được câu này ạ. Công chúa hỏi lại theo cách khác giúp em nhé 🥺"
         yield "token", {"text": answer}
