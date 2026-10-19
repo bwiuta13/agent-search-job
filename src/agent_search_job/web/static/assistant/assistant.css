@@ -2,7 +2,8 @@
 .assistant-page {
   --glass: rgba(255, 255, 255, .55);
   --glass-line: rgba(255, 255, 255, .85);
-  --orb: 300px;
+  /* orb co theo chiều cao màn hình để tiêu đề + orb + lời chào vừa trên laptop thấp (800px -> ~210px) */
+  --orb: clamp(140px, 86dvh - 480px, 300px);
   height: 100dvh; overflow: hidden;
   background:
     radial-gradient(60% 50% at 12% 18%, #ffe4d4 0, transparent 70%),
@@ -34,6 +35,7 @@
 
 .as-main {
   position: relative; display: flex; flex-direction: column; gap: 12px; min-height: 0;
+  min-width: 0; /* ô lưới 1fr không bị hàng chip không xuống dòng (mobile) kéo rộng hơn màn hình */
   padding: 20px clamp(16px, 4vw, 48px); border-radius: 28px;
   background: rgba(255, 255, 255, .35); border: 1px solid var(--glass-line); backdrop-filter: blur(6px);
 }
@@ -45,7 +47,8 @@
 }
 .as-chip-profile .i { width: 28px; height: 28px; padding: 6px; border-radius: 50%; background: var(--petal); }
 
-.as-hero { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; flex: 1; min-height: 0; }
+/* màn hình quá thấp: hero cuộn bên trong (safe center: tràn thì bám đầu, không bị cắt mất tiêu đề) thay vì đè lên composer */
+.as-hero { display: flex; flex-direction: column; align-items: center; justify-content: center; justify-content: safe center; gap: 8px; flex: 1; min-height: 0; overflow-y: auto; }
 .as-title { margin: 0; text-align: center; font-size: clamp(28px, 4.2vw, 46px); line-height: 1.15; color: var(--ink); }
 .as-title .soft { background: linear-gradient(90deg, #f3a0bf, #e8b4da); -webkit-background-clip: text; background-clip: text; color: transparent; }
 .as-orb-wrap { display: flex; flex-direction: column; align-items: center; }
@@ -101,6 +104,11 @@
 .as-sources { margin: 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 6px; font-size: 12px; }
 .as-sources a { display: inline-block; padding: 3px 10px; border-radius: 999px; background: var(--lilac-bg); color: var(--lilac); }
 .as-error { margin: 0; padding: 8px 12px; border-radius: 12px; background: var(--warn-bg); color: var(--warn); font-size: 14px; }
+/* lời chào đầu: bong bóng rộng cố định dưới orb ở màn hình trống; đã chat mà nó còn ở hero thì ẩn */
+.as-hero .as-greet { width: 100%; max-width: 560px; }
+.as-hero .as-greet .as-bubble { max-width: none; }
+.has-chat .as-hero .as-greet { display: none; }
+.as-greet-rest { opacity: 0; }
 
 .as-dock { display: flex; flex-direction: column; gap: 12px; }
 .as-suggest { position: relative; display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
@@ -184,7 +192,7 @@
 .as-history-del { padding: 0 8px; border: 0; background: none; color: var(--muted); cursor: pointer; }
 
 @media (max-width: 767px) {
-  .assistant-page { --orb: 200px; }
+  .assistant-page { --orb: clamp(88px, 86dvh - 490px, 200px); }
   .assistant-page.has-chat { --orb: 56px; }
   .as-shell { grid-template-columns: 1fr; grid-template-rows: auto 1fr; gap: 10px; padding: 10px; }
   .as-rail { flex-direction: row; padding: 6px 10px; border-radius: 18px; }
@@ -192,6 +200,9 @@
   .as-main { padding: 14px 12px; border-radius: 22px; }
   .as-top { display: none; }
   .as-tool span { display: none; }
+  /* chip gợi ý: 1 hàng vuốt ngang thay vì 4 hàng, chừa chỗ cho tiêu đề + orb + lời chào */
+  .as-suggest { flex-wrap: nowrap; justify-content: flex-start; overflow-x: auto; scrollbar-width: none; }
+  .as-sugg { flex: 0 0 auto; }
 }
 @media (prefers-reduced-motion: reduce) {
   .as-orb-css, .as-steps li.run::before, .as-thinking::before { animation: none; }

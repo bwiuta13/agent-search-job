@@ -59,6 +59,7 @@ wideForCharacter.addEventListener("change", loadCharacter);
 import("./stage.js")
   .then((m) => {
     stage = m.createStage($("#stage"), { orbSlot: $("#orb-slot"), avatarSlot: $("#avatar-slot") });
+    stage?.setState($(".as-orb-css").dataset.state); // stage nạp sau: theo trạng thái hiện tại (vd đang chào)
     loadCharacter();
   })
   .catch(() => {}); // không có WebGL2 / lỗi import -> giữ orb CSS, không có nhân vật
@@ -97,7 +98,26 @@ const bunnySay = (text, { sticky = false } = {}) => {
   });
 })();
 
+// Em chào trước: lời chào chỉ có ở giao diện (không lưu, không gửi LLM, không tốn lượt). Màn hình trống thì gõ dần
+// dưới orb; tin nhắn đầu tiên kéo nó vào đầu thread để hội thoại đọc liền mạch.
+const hour = new Date().getHours();
+const GREETING = `Em chào công chúa ạ ${hour < 11 ? "☀️" : hour < 18 ? "🌸" : "🌙"} Em tìm việc mới, so sánh JD, xem lương `
+  + "thị trường và review công ty giúp công chúa được nè. Hôm nay công chúa muốn em tìm việc gì ạ?";
+const greet = el("div", "as-msg assistant as-greet");
+const greetBubble = greet.appendChild(el("div", "as-bubble"));
+// phần chưa gõ vẫn nằm trong bong bóng nhưng trong suốt: bong bóng đủ cao ngay từ đầu, trang không xô lệch khi gõ
+const greetShown = el("span"), greetRest = el("span", "as-greet-rest");
+let greetTimer = 0;
+
 const addMessage = (role, text = "") => {
+  if (greet.isConnected && greet.parentElement !== thread) {
+    // tin nhắn đầu tiên: lời chào (đang gõ dở thì hiện đủ) chuyển từ dưới orb vào đầu thread
+    clearInterval(greetTimer);
+    greetShown.textContent = GREETING;
+    greetRest.textContent = "";
+    if (!controller) setOrb("idle");
+    thread.append(greet);
+  }
   document.body.classList.add("has-chat");
   const wrap = el("div", `as-msg ${role}`);
   const bubble = el("div", "as-bubble");
@@ -155,12 +175,34 @@ const addSources = (wrap, sources) => {
   }
 };
 
-const resetChat = () => {
+// Về màn hình trống. greetAgain=false khi sắp mở hội thoại cũ: không chào lại (lời chào không có trong lịch sử).
+const resetChat = (greetAgain = true) => {
   controller?.abort();
   convId = null;
+  clearInterval(greetTimer);
   thread.replaceChildren();
   document.body.classList.remove("has-chat");
   $("#bunny-say")?.classList.remove("on"); // chat mới: thỏ im, chờ câu hỏi mới
+  if (!greetAgain) {
+    greet.remove();
+    setOrb("idle");
+    return;
+  }
+  $(".as-hero").append(greet);
+  const words = GREETING.split(" ");
+  let n = matchMedia("(prefers-reduced-motion: reduce)").matches ? words.length - 1 : 0;
+  const type = () => {
+    n++;
+    greetShown.textContent = words.slice(0, n).join(" ");
+    greetRest.textContent = words.slice(n).map((w) => ` ${w}`).join("");
+    if (n < words.length) return;
+    clearInterval(greetTimer);
+    if (!controller) setOrb("idle");
+  };
+  greetBubble.replaceChildren(greetShown, greetRest);
+  setOrb("speaking");
+  type();
+  if (n < words.length) greetTimer = setInterval(type, 45);
 };
 
 // Mở 1 ngăn (id) hoặc đóng hết (null). Mở: focus vào ngăn, nhớ nút đã mở; đóng: trả focus về nút đó.
@@ -206,7 +248,7 @@ const loadHistory = async () => {
       }
       if (!res.ok) return loadHistory();
       const conv = await res.json();
-      resetChat();
+      resetChat(false);
       convId = conv.id;
       for (const m of conv.messages) {
         const w = addMessage(m.role, m.content);
@@ -447,6 +489,7 @@ $("#profile-delete").addEventListener("click", async () => {
   loadProfile();
 });
 
+resetChat(); // màn hình trống + em chào trước
 loadHistory();
 loadProfile();
 // Thỏ chào công chúa khi mở trang (1 lần, tự tắt) — người dùng biết ngay nhân vật đang ở đây

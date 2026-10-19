@@ -92,7 +92,7 @@ Quy tắc code (CLAUDE.md của user): **không tách hàm chỉ để phục v�
 - Shell toàn màn hình, nền gradient pastel + panel kính (`backdrop-filter`), font Bricolage Grotesque (tiêu đề, chữ gradient như ảnh mẫu) + Be Vietnam Pro; dùng token màu `--petal`, `--rose`, `--accent`… của `app.css`.
 - **Thanh icon trái**: logo · ✦ Chat mới · 💬 Lịch sử (ngăn kéo "Hội thoại trong 24 giờ qua", có nút xoá) · 👤 Hồ sơ của công chúa (panel: ô "Giới thiệu bản thân", trạng thái CV, nút xoá hồ sơ) · ⌕ về Tìm việc. Không có nút đăng xuất (app chưa có route logout).
 - **Góc phải trên**: chip Hồ sơ "Đã có CV" / "+ Thêm CV" (mở panel Hồ sơ).
-- **Trạng thái trống**: tiêu đề, orb ở giữa, chip gợi ý; `⋯` hiện thêm chip ngay trong hàng ("So sánh 2 việc", "Lương content executive?", "Lương theo cấp bậc") — không dùng popup vì canvas 3D nằm trên panel.
+- **Trạng thái trống**: tiêu đề, orb ở giữa (co theo chiều cao màn hình), **lời chào của em** gõ dần dưới orb (chỉ ở giao diện: không lưu, không gọi LLM; tin nhắn đầu tiên kéo nó lên đầu thread; mở hội thoại cũ thì không chào), chip gợi ý (mobile: 1 hàng vuốt ngang); `⋯` hiện thêm chip ngay trong hàng ("So sánh 2 việc", "Lương content executive?", "Lương theo cấp bậc") — không dùng popup vì canvas 3D nằm trên panel.
 - **Khi đã chat**: orb thu nhỏ dời lên trên; thread giữa (max ~760px); composer dính đáy.
   - Tin nhắn của em: markdown (`marked` → `DOMPurify`), link mở tab mới `rel="noopener noreferrer"`, chỉ cho `http(s)` và đường dẫn tương đối.
   - Dòng trạng thái tool: "Em đang tìm việc…" → "✓ 12 kết quả".
