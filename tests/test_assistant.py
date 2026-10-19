@@ -872,9 +872,17 @@ def test_purge_backup_has_no_chat(tmp_path):
                                  "VALUES ('user:1','bí mật',?,?)", (now, now)).lastrowid
         store.conn.execute("INSERT INTO chat_messages(conversation_id, role, content, created_at) "
                            "VALUES (?,?,?,?)", (cid, "user", "lương mong muốn 20 triệu", now))
+        store.conn.execute("INSERT INTO user_profiles(owner, about, cv_text, updated_at) VALUES (?,?,?,?)",
+                           ("guest:" + "g" * 32, "", "CVKHACH nội dung CV khách", now))
+        store.conn.execute("INSERT INTO user_profiles(owner, about, cv_text, updated_at) VALUES (?,?,?,?)",
+                           ("user:1", "GIUHOSO", "", now))
     report = purge.main(["--db", str(db)])
     bk = sqlite3.connect(report["backup"])
     assert bk.execute("SELECT COUNT(*) FROM chat_messages").fetchone()[0] == 0
     assert bk.execute("SELECT COUNT(*) FROM chat_conversations").fetchone()[0] == 0
-    assert b"20 tri" not in Path(report["backup"]).read_bytes()  # đã VACUUM, không còn trong trang trống
+    assert bk.execute("SELECT COUNT(*) FROM user_profiles WHERE owner LIKE 'guest:%'").fetchone()[0] == 0
+    assert bk.execute("SELECT about FROM user_profiles WHERE owner='user:1'").fetchone()[0] == "GIUHOSO"
+    raw = Path(report["backup"]).read_bytes()
+    assert b"20 tri" not in raw and b"CVKHACH" not in raw  # đã VACUUM, không còn trong trang trống
     assert store.conn.execute("SELECT COUNT(*) FROM chat_messages").fetchone()[0] == 1  # DB chính giữ chat còn hạn
+    assert store.conn.execute("SELECT COUNT(*) FROM user_profiles WHERE owner LIKE 'guest:%'").fetchone()[0] == 1
