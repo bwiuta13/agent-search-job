@@ -11,7 +11,7 @@
   <nav class="quick-chips" aria-label="Khám phá nhanh">
     <span class="qc-label">Khám phá nhanh:</span>
     {% for r in facets.role_clusters[:5] %}
-    <a class="chip-link" href="/search?role={{ r.value | urlencode }}">{{ r.value }} ({{ r.count }})</a>
+    <a class="chip-link" href="/search?role={{ r.value | urlencode }}">{{ role_label(r.value) }} ({{ r.count }})</a>
     {% endfor %}
   </nav>
 </section>
@@ -24,18 +24,26 @@
     </a>
     {% for r in facets.role_clusters %}
     <a href="/search?role={{ r.value | urlencode }}" {% if r.value == role %}aria-current="page"{% endif %}>
-      <span>{{ r.value }}</span><span class="n">{{ r.count }}</span>
+      <span>{{ role_label(r.value) }}</span><span class="n">{{ r.count }}</span>
     </a>
     {% endfor %}
   </nav>
 
   <div class="content-col">
-    <form class="filters filters-compact" method="get" action="/search">
-      <input type="hidden" name="role" value="{{ role }}">
+    <section class="tray">
+      <h2 style="margin:0 0 4px; font-size:17px">Tìm việc Content &amp; Marketing tại TP.HCM</h2>
+      <p class="lede" style="margin-bottom:14px">Lọc theo nhóm nghề, khu vực, mức lương — mở trang nguồn để ứng tuyển.</p>
+      <form class="filters" method="get" action="/search">
       <label class="field q">
         {{ icon('search') }}
         <input type="search" name="q" value="{{ q }}" placeholder="Ví dụ: content tiktok, brand marketing, SEO..." aria-label="Từ khóa">
       </label>
+      <select name="role" aria-label="Nhóm nghề">
+        <option value="">Mọi nhóm nghề</option>
+        {% for r in facets.role_clusters %}
+        <option value="{{ r.value }}" {% if r.value == role %}selected{% endif %}>{{ role_label(r.value) }} ({{ r.count }})</option>
+        {% endfor %}
+      </select>
       <select name="district" aria-label="Khu vực">
         <option value="">Mọi khu vực</option>
         {% for d in facets.districts %}
@@ -45,13 +53,13 @@
       <select name="work_mode" aria-label="Hình thức">
         <option value="">Mọi hình thức</option>
         {% for w in facets.work_modes %}
-        <option value="{{ w.value }}" {% if w.value == work_mode %}selected{% endif %}>{{ w.value }} ({{ w.count }})</option>
+        <option value="{{ w.value }}" {% if w.value == work_mode %}selected{% endif %}>{{ work_mode_label(w.value) }} ({{ w.count }})</option>
         {% endfor %}
       </select>
       <select name="job_level" aria-label="Cấp bậc">
         <option value="">Mọi cấp bậc</option>
         {% for l in facets.job_levels %}
-        <option value="{{ l.value }}" {% if l.value == job_level %}selected{% endif %}>{{ l.value }} ({{ l.count }})</option>
+        <option value="{{ l.value }}" {% if l.value == job_level %}selected{% endif %}>{{ level_label(l.value) }} ({{ l.count }})</option>
         {% endfor %}
       </select>
       <input type="search" name="company" value="{{ company }}" placeholder="Công ty, vd: FPT..." aria-label="Tên công ty">
@@ -59,11 +67,12 @@
       <select name="source" aria-label="Nguồn">
         <option value="all" {% if source == 'all' %}selected{% endif %}>Mọi nguồn</option>
         {% for s in facets.sources %}
-        <option value="{{ s.value }}" {% if s.value == source %}selected{% endif %}>{{ s.value }} ({{ s.count }})</option>
+        <option value="{{ s.value }}" {% if s.value == source %}selected{% endif %}>{{ source_label(s.value) }} ({{ s.count }})</option>
         {% endfor %}
       </select>
       <button class="btn go" type="submit">{{ icon('search') }}Tìm việc</button>
     </form>
+    </section>
 
     <section class="rescan-tray" id="rescan">
       <div class="scan-panel" id="scan-panel" hidden>

@@ -21,10 +21,10 @@
     </h3>
     <p class="company">{{ j.company_name }}</p>
     <div class="badges">
-      <span class="badge">{{ j.role_cluster }}</span>
+      <span class="badge">{{ role_label(j.role_cluster) }}</span>
       {% if j.district %}<span class="badge gray">{{ icon('map-pin') }}{{ j.district }}</span>{% endif %}
-      {% if j.job_level %}<span class="badge gray">{{ j.job_level }}</span>{% endif %}
-      {% if j.work_mode and j.work_mode != 'onsite' %}<span class="badge green">{{ j.work_mode }}</span>{% endif %}
+      {% if j.job_level %}<span class="badge gray">{{ level_label(j.job_level.split(',')[0]) }}{% if j.job_level.count(',') %}+{% endif %}</span>{% endif %}
+      {% if j.work_mode and j.work_mode != 'onsite' %}<span class="badge green">{{ work_mode_label(j.work_mode) }}</span>{% endif %}
       {% if j.llm_relevance %}<span class="badge green" title="{{ j.llm_reason }}">{{ icon('sparkles') }}phù hợp {{ (j.llm_relevance * 100) | round(0) | int }}%</span>{% endif %}
       {% for p in j.platforms[:3] %}<span class="badge gray">{{ p }}</span>{% endfor %}
     </div>

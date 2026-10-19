@@ -156,6 +156,33 @@ templates.env.globals["relative_time"] = _relative_time  # macro gọi như hàm
 from datetime import date as _date  # noqa: E402
 
 templates.env.globals["now_date"] = _date.today().isoformat()
+
+# Nhãn tiếng Việt cho các giá trị lọc (sidebar, dropdown, chip trên thẻ việc)
+from ..domain.models import (  # noqa: E402
+    JOB_LEVEL_LABELS_VI, ROLE_CLUSTER_LABELS_VI,
+)
+
+SOURCE_LABELS_VI: dict[str, str] = {
+    "vietnamworks": "VietnamWorks", "linkedin": "LinkedIn", "itviec": "ITviec",
+    "careerviet": "CareerViet", "topcv": "TopCV", "topdev": "TopDev",
+    "vng": "VNG Careers", "all": "Mọi nguồn",
+}
+WORK_MODE_LABELS_VI: dict[str, str] = {
+    "onsite": "Tại văn phòng", "hybrid": "Hybrid", "remote": "Remote",
+}
+
+
+def _vi_label(value: Optional[str], mapping: dict) -> str:
+    """Giá trị lọc -> nhãn tiếng Việt (không có trong map thì giữ nguyên)."""
+    if not value:
+        return ""
+    return mapping.get(value, value)
+
+
+templates.env.globals["role_label"] = lambda v: _vi_label(v, ROLE_CLUSTER_LABELS_VI)
+templates.env.globals["level_label"] = lambda v: _vi_label(v, JOB_LEVEL_LABELS_VI)
+templates.env.globals["source_label"] = lambda v: _vi_label(v, SOURCE_LABELS_VI)
+templates.env.globals["work_mode_label"] = lambda v: _vi_label(v, WORK_MODE_LABELS_VI)
 # ?v=<mtime> cho file static: sửa CSS/icon là trình duyệt tải bản mới, không dính cache cũ
 templates.env.globals["asset_v"] = lambda name: int((STATIC_DIR / name).stat().st_mtime)
 
