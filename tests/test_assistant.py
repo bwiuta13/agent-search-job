@@ -170,8 +170,9 @@ DOCX_RELS = (
     b'relationships/officeDocument" Target="word/document.xml"/></Relationships>')
 
 
-def make_docx(body: bytes) -> bytes:
-    """.docx tối thiểu (zipfile thuần): word/document.xml UTF-8 với body nằm trong <w:body>."""
+def make_docx(body: bytes, method: int = zipfile.ZIP_DEFLATED) -> bytes:
+    """.docx tối thiểu (zipfile thuần): word/document.xml UTF-8 với body nằm trong <w:body>,
+    nén theo method (chỉ áp cho word/document.xml)."""
     xml = (b'<?xml version="1.0" encoding="UTF-8"?>'
            b'<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
            b'<w:body>' + body + b'</w:body></w:document>')
@@ -179,7 +180,7 @@ def make_docx(body: bytes) -> bytes:
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("[Content_Types].xml", DOCX_CONTENT_TYPES)
         z.writestr("_rels/.rels", DOCX_RELS)
-        z.writestr("word/document.xml", xml)
+        z.writestr("word/document.xml", xml, compress_type=method)
     return buf.getvalue()
 
 
@@ -225,6 +226,23 @@ class TestCvUpload:
         assert len(docx) < 200 * 1024
         r = client.post("/api/assistant/profile/cv", files={"file": ("bomb.docx", docx, DOCX_MIME)})
         assert r.status_code == 400 and "bị lỗi" in r.json()["detail"]
+
+    @pytest.mark.parametrize("method", [zipfile.ZIP_BZIP2, zipfile.ZIP_LZMA])
+    def test_docx_unsupported_compression_rejected(self, app, method):
+        client = login(app)
+        xml = ("<w:p><w:r><w:t>Kinh nghiệm 3 năm viết content TikTok, Facebook "
+                "cho thương hiệu mỹ phẩm</w:t></w:r></w:p>")
+        docx = make_docx(xml.encode(), method)
+        r = client.post("/api/assistant/profile/cv", files={"file": ("cv.docx", docx, DOCX_MIME)})
+        assert r.status_code == 400 and "bị lỗi" in r.json()["detail"]
+
+    def test_docx_stored_compression_accepted(self, app):
+        client = login(app)
+        xml = ("<w:p><w:r><w:t>Kinh nghiệm 3 năm viết content TikTok, Facebook "
+                "cho thương hiệu mỹ phẩm</w:t></w:r></w:p>")
+        docx = make_docx(xml.encode(), zipfile.ZIP_STORED)
+        r = client.post("/api/assistant/profile/cv", files={"file": ("cv.docx", docx, DOCX_MIME)})
+        assert r.status_code == 200 and "mỹ phẩm" in r.json()["preview"]
 
     def test_docx_without_document_xml_rejected(self, app):
         client = login(app)

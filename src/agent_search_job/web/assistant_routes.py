@@ -136,8 +136,13 @@ def upload_cv(file: UploadFile = File(...), owner: str = Depends(chat_owner)):
             from pypdf import PdfReader
             text = "\n".join(p.extract_text() or "" for p in PdfReader(io.BytesIO(data)).pages)
         else:
-            with zipfile.ZipFile(io.BytesIO(data)) as z, z.open("word/document.xml") as f:
-                xml = f.read(10 * 1024 * 1024 + 1)  # đọc có giới hạn: chặn DOCX zip bomb
+            with zipfile.ZipFile(io.BytesIO(data)) as z:
+                info = z.getinfo("word/document.xml")
+                if info.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
+                    # bzip2/LZMA: zipfile giải nén cả entry, bỏ qua giới hạn read() -> từ chối
+                    raise ValueError("kiểu nén không hỗ trợ")
+                with z.open(info) as f:
+                    xml = f.read(10 * 1024 * 1024 + 1)  # đọc có giới hạn: chặn DOCX zip bomb
             if len(xml) > 10 * 1024 * 1024:
                 raise ValueError("document.xml quá lớn")
             xml_text = xml.decode("utf-8", errors="replace")
