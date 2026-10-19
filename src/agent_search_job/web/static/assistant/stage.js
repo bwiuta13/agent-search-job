@@ -99,7 +99,7 @@ export function createStage(canvas, { orbSlot, avatarSlot }) {
   const avatarCam = new THREE.PerspectiveCamera(30, 1, 0.1, 50);
   avatarCam.position.set(0, 1.3, 3.2);
   avatarCam.lookAt(0, 1, 0);
-  let character = null, mixer = null;
+  let character = null, mixer = null, lost = false;
 
   const cur = { ...STATES.idle };
   let target = STATES.idle, hue = 0;
@@ -108,6 +108,7 @@ export function createStage(canvas, { orbSlot, avatarSlot }) {
   const views = [[orbSlot, orbScene, orbCam], [avatarSlot, avatarScene, avatarCam]];
 
   const frame = () => {
+    if (lost) return; // sau khi mất context thì dừng hẳn: không vẽ lại kể cả khi three tự khôi phục context
     timer.update();
     const dt = Math.min(timer.getDelta(), 0.1), t = timer.getElapsed();
     const still = reduced.matches; // giảm chuyển động: chỉ đổi màu theo trạng thái
@@ -152,12 +153,17 @@ export function createStage(canvas, { orbSlot, avatarSlot }) {
     if (resized || reduced.matches) frame();
   });
   for (const node of [canvas, orbSlot, avatarSlot]) ro.observe(node);
-  const ac = new AbortController(); // gỡ mọi listener một lượt trong dispose()
+  const ac = new AbortController(); // gỡ mọi listener một lượt (dispose() hoặc mất context)
   document.addEventListener("visibilitychange", play, { signal: ac.signal });
   reduced.addEventListener("change", () => { play(); frame(); }, { signal: ac.signal });
+  // Mất context là kết thúc cho phiên trang này: three tự preventDefault + khởi tạo lại khi webglcontextrestored, nhưng env PMREM
+  // (render target) không được dựng lại -> không được để visibilitychange / đổi reduced-motion bật lại vòng lặp.
   canvas.addEventListener("webglcontextlost", () => {
+    lost = true;
     renderer.setAnimationLoop(null);
-    document.body.classList.remove("webgl-on"); // hiện lại orb CSS (env PMREM mất theo context nên không dựng lại)
+    ro.disconnect();
+    ac.abort(); // gỡ visibilitychange + reduced.change (+ chính listener này)
+    document.body.classList.remove("webgl-on"); // hiện lại orb CSS
     canvas.hidden = true; // canvas mất context bị Chrome vẽ thành ô trắng đục phủ cả trang ở lần repaint kế tiếp
   }, { signal: ac.signal });
 
