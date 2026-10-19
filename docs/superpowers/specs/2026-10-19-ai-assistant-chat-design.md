@@ -80,13 +80,13 @@ Quy tắc code (CLAUDE.md của user): **không tách hàm chỉ để phục v�
 │ ◎  │                                  [♛ Hồ sơ: Đã có CV] │
 │ ✦  │        Em giúp công chúa tìm việc                    │
 │ 💬 │        Content & Marketing tại TP.HCM                │
-│ ⚙  │                  ( quả cầu kính 3D )                 │
+│ 👤 │                  ( quả cầu kính 3D )                 │
 │ ⌕  │  [Việc mới tuần này] [Lương cao nhất] [Hợp với hồ sơ │
 │    │   của tôi] [Công ty tuyển nhiều] [⋯]                 │
-│ ⏻  │ ┌──────────────────────────────────────────────────┐ │
+│    │ ┌──────────────────────────────────────────────────┐ │
 │┌───┴┐│ Hỏi em bất cứ điều gì về việc làm…               │ │
-││ 3D ││ [📎 Đính kèm CV] [💡 Deep Think]        [➤ Gửi] │ │
-└┴────┴┴──────────────────────────────────────────────────────┘
+││ 3D ││ [📎 Đính kèm CV] [💡 Deep Think]        [➤ Gửi]  │ │
+└┴────┴┴────────────────────────────────────────────────────┘
 ```
 
 - Shell toàn màn hình, nền gradient pastel + panel kính (`backdrop-filter`), font Bricolage Grotesque (tiêu đề, chữ gradient như ảnh mẫu) + Be Vietnam Pro; dùng token màu `--petal`, `--rose`, `--accent`… của `app.css`.
@@ -243,7 +243,7 @@ CREATE TABLE IF NOT EXISTS assistant_usage (
 
 - Vendor `three@0.186.1`: `build/three.module.js`, `build/three.core.js`, `examples/jsm/environments/RoomEnvironment.js`, `examples/jsm/capabilities/WebGL.js`, `examples/jsm/loaders/GLTFLoader.js`, `examples/jsm/utils/BufferGeometryUtils.js`, `examples/jsm/utils/SkeletonUtils.js` (GLTFLoader import file này) — giữ cấu trúc thư mục để import tương đối hoạt động. Importmap trong `assistant.html`: `"three"` → `/static/vendor/three/build/three.module.js`, `"three/addons/"` → `/static/vendor/three/examples/jsm/`.
 - `stage.js` export `createStage(canvas, {orbSlot, avatarSlot})` → `{ setState(state), setCharacter(url), dispose() }`; trả `null` khi không có WebGL2 (khi đó chỉ còn orb CSS).
-  - 1 canvas `position: fixed; inset: 0; pointer-events: none` sau UI; 1 `WebGLRenderer` (alpha); mỗi frame đọc `getBoundingClientRect()` của slot → `setViewport` + `setScissor` + render scene tương ứng.
+  - 1 canvas `position: fixed; inset: 0; pointer-events: none` trên panel kính (z-index 2, dưới các ngăn kéo z-index 5); 1 `WebGLRenderer` (alpha); mỗi frame đọc `getBoundingClientRect()` của slot → `setViewport` + `setScissor` + render scene tương ứng.
   - **Orb (desktop)**: gồm 2 lớp trong một group. Lõi màu đặc: `SphereGeometry(0.8)` + `ShaderMaterial` (gradient hồng → tím → xanh ngọc theo độ cao, viền fresnel, xoay màu theo state). Vỏ kính mỏng: `IcosahedronGeometry(1, 24)` (bỏ uv + `mergeVertices` để pháp tuyến mượt, dùng cho cả hai chế độ) + `MeshPhysicalMaterial` (transmission 1, thickness 0.35, ior 1.45, roughness 0.04, iridescence 1, iridescenceIOR 1.3, iridescenceThicknessRange [100, 800], clearcoat 1, attenuationColor hồng). `scene.environment` từ `PMREMGenerator.fromScene(new RoomEnvironment())` kèm `scene.environmentIntensity` (r186 bỏ qua `material.envMapIntensity` khi có `scene.environment`); `renderer.transmissionResolutionScale = 0.5`.
   - **Orb (mobile / máy yếu)** — `matchMedia('(pointer: coarse)')` hoặc `hardwareConcurrency ≤ 4`): lõi giữ nguyên; vỏ là `ShaderMaterial` fresnel trong suốt (rim hồng → xanh ngọc + highlight) trên `IcosahedronGeometry(1, 12)`, không dùng transmission.
   - Bóng phản chiếu dưới orb: CSS (ellipse radial-gradient + blur), không dùng `Reflector`.

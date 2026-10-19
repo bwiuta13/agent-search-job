@@ -31,7 +31,7 @@ tests/          normalize, storage, MCP protocol, web API, trợ lý AI — ch�
 ## Quick start
 
 ```bash
-pip install -e ".[dev]"          # hoặc: pip install fastapi uvicorn jinja2 playwright jobspy httpx python-multipart pytest pytest-asyncio
+pip install -e ".[dev]"          # hoặc: pip install fastapi uvicorn jinja2 playwright jobspy httpx python-multipart python-dotenv pypdf pytest pytest-asyncio
 python -m playwright install chromium   # cho TopCV adapter
 
 # 1) Crawl dữ liệu thật
