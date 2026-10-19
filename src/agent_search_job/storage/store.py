@@ -130,6 +130,50 @@ CREATE TABLE IF NOT EXISTS saved_jobs (
     saved_at TEXT NOT NULL,
     UNIQUE(user_id, job_id)
 );
+
+-- Trợ lý AI (/assistant). owner = 'user:<user_id>' | 'guest:<token>'
+CREATE TABLE IF NOT EXISTS chat_conversations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner TEXT NOT NULL,
+    title TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_chat_conv_owner ON chat_conversations(owner, updated_at);
+CREATE INDEX IF NOT EXISTS idx_chat_conv_updated ON chat_conversations(updated_at);
+
+CREATE TABLE IF NOT EXISTS chat_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    conversation_id INTEGER NOT NULL REFERENCES chat_conversations(id) ON DELETE CASCADE,
+    role TEXT NOT NULL,
+    content TEXT NOT NULL,
+    meta_json TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_chat_msg_conv ON chat_messages(conversation_id, id);
+
+CREATE TABLE IF NOT EXISTS user_profiles (
+    owner TEXT PRIMARY KEY,
+    about TEXT NOT NULL DEFAULT '',
+    cv_text TEXT NOT NULL DEFAULT '',
+    cv_filename TEXT,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS web_search_cache (
+    key TEXT PRIMARY KEY,
+    provider TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    expires_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS assistant_usage (
+    owner TEXT NOT NULL,
+    day TEXT NOT NULL,
+    messages INTEGER NOT NULL DEFAULT 0,
+    web_searches INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (owner, day)
+);
 """
 
 
@@ -634,6 +678,25 @@ class JobStore:
                 (job_id, model, prompt_version, kind,
                  json.dumps(payload, ensure_ascii=False), utcnow().isoformat()),
             )
+
+    # ------------------------------------------------------------------
+    # Trợ lý AI: dọn dữ liệu quá hạn (gọi ở mỗi request API + sweep mỗi giờ)
+    # ------------------------------------------------------------------
+
+    def purge_expired_chat(self, ttl_hours: int) -> int:
+        """Xoá hội thoại (mọi owner) + hồ sơ khách không hoạt động quá ttl_hours, cache web
+        hết hạn và bộ đếm quota cũ hơn 2 ngày. Trả số hội thoại đã xoá."""
+        now = utcnow()
+        cut = (now - timedelta(hours=ttl_hours)).isoformat()
+        with self.conn:
+            n = self.conn.execute(
+                "DELETE FROM chat_conversations WHERE updated_at < ?", (cut,)).rowcount
+            self.conn.execute(
+                "DELETE FROM user_profiles WHERE owner LIKE 'guest:%' AND updated_at < ?", (cut,))
+            self.conn.execute("DELETE FROM web_search_cache WHERE expires_at < ?", (now.isoformat(),))
+            self.conn.execute("DELETE FROM assistant_usage WHERE day < ?",
+                              ((now - timedelta(days=2)).date().isoformat(),))
+        return n
 
     def jobs_needing_llm(self, model: str, prompt_version: str,
                          limit: int = 50) -> list[dict]:

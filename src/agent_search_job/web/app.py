@@ -10,8 +10,11 @@ Theo docs/research-website.md mục 10 (UX) và implementation-plan.md mục 5 (
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
+import sqlite3
+from contextlib import asynccontextmanager
 from datetime import timedelta
 import re
 import secrets
@@ -35,7 +38,29 @@ STATIC_DIR = Path(__file__).parent / "static"
 SESSION_COOKIE = "vnjobs_session"
 SESSION_DAYS = 7
 
-app = FastAPI(title="Agent Search Job", version="0.1.0", docs_url=None, redoc_url=None)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Dọn hội thoại trợ lý AI quá hạn khi khởi động và mỗi giờ — chat bị xoá sau TTL kể cả
+    khi không ai gọi API (dữ liệu không nằm lại trong DB quá 24 giờ + tối đa 1 giờ)."""
+    ttl = int(os.environ.get("ASSISTANT_CHAT_TTL_HOURS") or 24)
+    get_store().purge_expired_chat(ttl)
+
+    async def sweep():
+        while True:
+            await asyncio.sleep(3600)
+            try:
+                get_store().purge_expired_chat(ttl)
+            except sqlite3.Error:  # DB bận -> thử lại giờ sau
+                pass
+
+    task = asyncio.create_task(sweep())
+    yield
+    task.cancel()
+
+
+app = FastAPI(title="Agent Search Job", version="0.1.0", docs_url=None, redoc_url=None,
+              lifespan=lifespan)
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 # CSS, icon sprite (Lucide), favicon — public, không chứa dữ liệu
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
@@ -613,3 +638,9 @@ async def mcp_endpoint(request: Request):
 def _uid(store: JobStore, email: str) -> int:
     row = store.conn.execute("SELECT user_id FROM users WHERE email=?", (email,)).fetchone()
     return row["user_id"] if row else 0
+
+
+# Trợ lý AI (/assistant) — import cuối file vì assistant_routes dùng get_store/current_user/templates ở trên
+from .assistant_routes import router as assistant_router  # noqa: E402
+
+app.include_router(assistant_router)
