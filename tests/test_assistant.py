@@ -256,3 +256,203 @@ class TestCvUpload:
         client = login(app)
         r = client.post("/api/assistant/profile/cv", files={"file": ("scan.pdf", make_pdf(""), "application/pdf")})
         assert r.status_code == 400 and "không đọc được chữ" in r.json()["detail"]
+
+
+def add_job(appmod, **kw) -> int:
+    fields = dict(title="Content Marketing Executive", company_name="Công Ty TNHH ABC",
+                  salary_text="15 - 25 triệu", address="123 Nguyễn Huệ, Quận 1, TP.HCM",
+                  city="Hồ Chí Minh", description="Viết content TikTok, Facebook. Dùng Canva, CapCut.",
+                  requirements="2 năm kinh nghiệm content", source="vietnamworks",
+                  source_url="https://example.com/job/1", source_job_id="1")
+    fields.update(kw)
+    return appmod.get_store().insert_job(normalize_job(NormalizedJob(**fields)))
+
+
+def sse(*deltas) -> list[str]:
+    """Một lượt stream giả của /chat/completions: mỗi delta 1 dòng `data:` rồi [DONE]."""
+    return [f"data: {json.dumps({'choices': [{'delta': d}]}, ensure_ascii=False)}"
+            for d in deltas] + ["data: [DONE]"]
+
+
+def tool_call(name, args, call_id="call_1", raw=None) -> dict:
+    return {"tool_calls": [{"index": 0, "id": call_id, "type": "function", "function": {
+        "name": name, "arguments": raw if raw is not None else json.dumps(args, ensure_ascii=False)}}]}
+
+
+class FakeHTTP:
+    """Thay httpx.AsyncClient trong agent: stream() trả lần lượt các lượt SSE, post() trả Tavily."""
+
+    def __init__(self, rounds, tavily=None):
+        self.rounds, self.tavily = list(rounds), tavily
+        self.requests, self.posts = [], []
+
+    def __call__(self, *a, **k):
+        return self
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+    def stream(self, method, url, headers=None, json=None):
+        self.requests.append(copy.deepcopy(json))  # agent còn sửa messages sau khi gửi
+        lines = self.rounds.pop(0)
+
+        class Resp:
+            async def __aenter__(s):
+                if isinstance(lines, Exception):
+                    raise lines
+                return s
+
+            async def __aexit__(s, *a):
+                return False
+
+            def raise_for_status(s):
+                pass
+
+            async def aiter_lines(s):
+                for line in lines:
+                    yield line
+        return Resp()
+
+    async def post(self, url, json=None, headers=None, timeout=None):
+        self.posts.append(json)
+        payload = self.tavily
+
+        class Resp:
+            status_code = 200
+
+            def raise_for_status(s):
+                pass
+
+            def json(s):
+                return payload
+        return Resp()
+
+
+def fake_llm(monkeypatch, rounds, tavily=None) -> FakeHTTP:
+    import agent_search_job.assistant.agent as agent
+    fake = FakeHTTP(rounds, tavily)
+    monkeypatch.setattr(agent.httpx, "AsyncClient", fake)
+    return fake
+
+
+def events(r) -> list[tuple[str, dict]]:
+    return [(e, json.loads(d)) for e, d in re.findall(r"event: (\w+)\ndata: (.*)\n\n", r.text)]
+
+
+class TestChat:
+    def test_tool_round_then_answer_is_streamed_and_saved(self, app, monkeypatch):
+        client = login(app)
+        jid = add_job(app)
+        fake = fake_llm(monkeypatch, [
+            sse({"reasoning_content": "cần tìm việc"}, {"content": "Dạ công chúa, em tìm nha!"},
+                tool_call("search_jobs", {"query": "content", "limit": 5})),
+            sse({"content": f"Có [Content Marketing Executive](/jobs/{jid}) nè 💐"}),
+        ])
+        r = client.post("/api/assistant/chat", json={"message": "tìm việc content"})
+        assert r.status_code == 200 and r.headers["content-type"].startswith("text/event-stream")
+        ev = events(r)
+        assert [e for e, _ in ev] == ["conversation", "token", "token", "tool_start", "tool_end",
+                                      "token", "done"]
+        assert ev[3][1]["label"] == "Em đang tìm việc…"
+        card = ev[4][1]["jobs"][0]
+        assert ev[4][1]["ok"] and card["job_id"] == jid and card["url"] == f"/jobs/{jid}"
+        assert fake.requests[0]["tools"] and fake.requests[0]["stream"] is True
+        assert fake.requests[0]["tool_choice"] == "auto"
+        sent = fake.requests[1]["messages"]
+        assert sent[-2]["role"] == "assistant" and sent[-2]["reasoning_content"] == "cần tìm việc"
+        assert sent[-2]["tool_calls"][0]["function"]["name"] == "search_jobs"
+        assert sent[-1]["role"] == "tool" and sent[-1]["tool_call_id"] == "call_1"
+        assert json.loads(sent[-1]["content"])["total_estimate"] == 1
+        conv = client.get(f"/api/assistant/conversations/{ev[0][1]['id']}").json()
+        assert conv["title"] == "tìm việc content"
+        assert [m["role"] for m in conv["messages"]] == ["user", "assistant"]
+        assert conv["messages"][1]["content"] == (
+            f"Dạ công chúa, em tìm nha!\n\nCó [Content Marketing Executive](/jobs/{jid}) nè 💐")
+        assert conv["messages"][1]["meta"]["jobs"][0]["job_id"] == jid
+        assert conv["messages"][1]["meta"]["tools"] == [
+            {"name": "search_jobs", "summary": "1 kết quả", "ok": True}]
+
+    def test_follow_up_sends_history_and_profile(self, app, monkeypatch):
+        client = login(app)
+        client.put("/api/assistant/profile", json={"about": "3 năm content TikTok, muốn 20 triệu"})
+        fake = fake_llm(monkeypatch, [sse({"content": "Dạ"}), sse({"content": "Dạ tiếp"})])
+        cid = events(client.post("/api/assistant/chat", json={"message": "câu 1"}))[0][1]["id"]
+        client.post("/api/assistant/chat", json={"message": "câu 2", "conversation_id": cid})
+        msgs = fake.requests[1]["messages"]
+        assert "3 năm content TikTok" in msgs[0]["content"] and "công chúa" in msgs[0]["content"]
+        assert [(m["role"], m["content"]) for m in msgs[1:]] == [
+            ("user", "câu 1"), ("assistant", "Dạ"), ("user", "câu 2")]
+
+    def test_get_jobs_returns_full_jd(self, app, monkeypatch):
+        client = login(app)
+        jid = add_job(app, description="Mô tả dài " * 50)
+        fake = fake_llm(monkeypatch, [sse(tool_call("get_jobs", {"job_ids": [jid, 99999]})),
+                                      sse({"content": "ok"})])
+        ev = events(client.post("/api/assistant/chat", json={"message": "phân tích JD"}))
+        out = json.loads(fake.requests[1]["messages"][-1]["content"])
+        assert out["jobs"][0]["description"].startswith("Mô tả dài")
+        assert out["jobs"][1] == {"job_id": 99999, "error": "không tìm thấy việc này"}
+        assert [d for e, d in ev if e == "tool_end"][0]["summary"] == "đọc 1 JD"
+
+    def test_bad_tool_arguments_go_back_to_model(self, app, monkeypatch):
+        client = login(app)
+        fake = fake_llm(monkeypatch, [sse(tool_call("search_jobs", None, raw="{hỏng")),
+                                      sse({"content": "Em thử lại nhé"})])
+        ev = events(client.post("/api/assistant/chat", json={"message": "x"}))
+        end = [d for e, d in ev if e == "tool_end"][0]
+        assert end["ok"] is False
+        assert "error" in json.loads(fake.requests[1]["messages"][-1]["content"])
+        assert ev[-1][0] == "done"
+
+    def test_round_limit_forces_answer_without_tools(self, app, monkeypatch):
+        import agent_search_job.assistant.agent as agent
+        monkeypatch.setattr(agent, "MAX_ROUNDS", 1)
+        client = login(app)
+        fake = fake_llm(monkeypatch, [sse(tool_call("search_jobs", {"query": "x"})),
+                                      sse({"content": "Em trả lời luôn ạ"})])
+        ev = events(client.post("/api/assistant/chat", json={"message": "x"}))
+        assert "tools" in fake.requests[0] and "tools" not in fake.requests[1]
+        assert ev[-1][0] == "done"
+
+    def test_deep_think_uses_more_rounds_and_tokens(self, app, monkeypatch):
+        client = login(app)
+        fake = fake_llm(monkeypatch, [sse({"content": "ok"})])
+        client.post("/api/assistant/chat", json={"message": "x", "deep_think": True})
+        assert fake.requests[0]["max_tokens"] == 6000
+
+    def test_llm_not_configured(self, app, monkeypatch):
+        monkeypatch.delenv("OPENAI_API_KEY")
+        client = login(app)
+        ev = events(client.post("/api/assistant/chat", json={"message": "x"}))
+        assert [e for e, _ in ev] == ["conversation", "error"]
+        assert ev[1][1]["code"] == "llm_not_configured"
+        conv = client.get(f"/api/assistant/conversations/{ev[0][1]['id']}").json()
+        assert [m["role"] for m in conv["messages"]] == ["user"]
+
+    def test_llm_connection_error(self, app, monkeypatch):
+        import httpx
+        client = login(app)
+        fake_llm(monkeypatch, [httpx.ConnectError("down")])
+        ev = events(client.post("/api/assistant/chat", json={"message": "x"}))
+        assert ev[-1] == ("error", {"code": "llm_error",
+                                    "message": "Em bị lỗi kết nối AI mất rồi, công chúa bấm thử lại giúp em nha 🥺"})
+
+    def test_validation_and_ownership(self, app, monkeypatch):
+        monkeypatch.delenv("OPENAI_API_KEY")
+        client = login(app)
+        assert client.post("/api/assistant/chat", json={"message": "  "}).status_code == 400
+        assert client.post("/api/assistant/chat", json={"message": "x" * 4001}).status_code == 400
+        other = add_conv(app, f"user:{uid(app, 'b@example.com')}")
+        assert client.post("/api/assistant/chat",
+                           json={"message": "x", "conversation_id": other}).status_code == 404
+
+    def test_daily_message_limit(self, app, monkeypatch):
+        monkeypatch.delenv("OPENAI_API_KEY")
+        monkeypatch.setenv("ASSISTANT_DAILY_MESSAGES", "1")
+        client = login(app)
+        assert client.post("/api/assistant/chat", json={"message": "1"}).status_code == 200
+        r = client.post("/api/assistant/chat", json={"message": "2"})
+        assert r.status_code == 429 and "mai mình nói tiếp" in r.json()["detail"]

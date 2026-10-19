@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 import os
 import re
 import zipfile
@@ -17,7 +18,9 @@ from html import unescape
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
+from fastapi.responses import StreamingResponse
 
+from ..assistant.agent import run_agent
 from ..domain.models import utcnow
 from .app import _uid, current_user, get_store
 
@@ -25,6 +28,8 @@ router = APIRouter()
 GUEST_COOKIE = "vnjobs_guest"
 GUEST_TOKEN = re.compile(r"[A-Za-z0-9_-]{32}")  # secrets.token_urlsafe(24)
 MAX_CV_BYTES = 5 * 1024 * 1024
+HISTORY_MESSAGES = 10
+log = logging.getLogger(__name__)
 
 
 def same_origin(request: Request) -> None:
@@ -164,3 +169,80 @@ def upload_cv(file: UploadFile = File(...), owner: str = Depends(chat_owner)):
             "cv_filename=excluded.cv_filename, updated_at=excluded.updated_at",
             (owner, text, filename, utcnow().isoformat()))
     return {"cv_filename": filename, "cv_chars": len(text), "preview": text[:300]}
+
+
+@router.post("/api/assistant/chat", dependencies=[Depends(same_origin)])
+async def assistant_chat(request: Request, owner: str = Depends(chat_owner)):
+    """Body {conversation_id?, message, deep_think} -> text/event-stream.
+
+    Lỗi biết trước khi stream (body sai 400, quota 429, hội thoại lạ 404) trả JSON {detail}."""
+    try:
+        body = await request.json()
+    except ValueError:
+        raise HTTPException(400, "Dữ liệu không hợp lệ")
+    body = body if isinstance(body, dict) else {}
+    message = str(body.get("message") or "").strip()
+    if not 1 <= len(message) <= 4000:
+        raise HTTPException(400, "Tin nhắn cần từ 1 đến 4000 ký tự ạ")
+    deep_think = bool(body.get("deep_think"))
+    store = get_store()
+    now = utcnow().isoformat()
+    day = now[:10]
+    used = store.conn.execute("SELECT messages FROM assistant_usage WHERE owner=? AND day=?",
+                              (owner, day)).fetchone()
+    if (used["messages"] if used else 0) >= int(os.environ.get("ASSISTANT_DAILY_MESSAGES") or 100):
+        raise HTTPException(429, "Hôm nay công chúa hỏi em nhiều quá rồi, mai mình nói tiếp nha 💐")
+    conv_id = body.get("conversation_id")
+    if conv_id is not None:
+        conv = store.conn.execute("SELECT id, title FROM chat_conversations WHERE id=? AND owner=?",
+                                  (conv_id, owner)).fetchone()
+        if not conv:
+            raise HTTPException(404, "Không tìm thấy hội thoại")
+        conv_id, title = conv["id"], conv["title"]
+        history = [{"role": r["role"], "content": r["content"]} for r in store.conn.execute(
+            "SELECT role, content FROM (SELECT id, role, content FROM chat_messages "
+            "WHERE conversation_id=? ORDER BY id DESC LIMIT ?) ORDER BY id",
+            (conv_id, HISTORY_MESSAGES))]
+    else:
+        title = message[:60]
+        with store.conn:
+            conv_id = store.conn.execute(
+                "INSERT INTO chat_conversations(owner, title, created_at, updated_at) VALUES (?,?,?,?)",
+                (owner, title, now, now)).lastrowid
+        history = []
+    with store.conn:
+        store.conn.execute(
+            "INSERT INTO chat_messages(conversation_id, role, content, created_at) VALUES (?,?,?,?)",
+            (conv_id, "user", message, now))
+        store.conn.execute("UPDATE chat_conversations SET updated_at=? WHERE id=?", (now, conv_id))
+        store.conn.execute(
+            "INSERT INTO assistant_usage(owner, day, messages) VALUES (?,?,1) "
+            "ON CONFLICT(owner, day) DO UPDATE SET messages = messages + 1", (owner, day))
+    profile = store.conn.execute("SELECT about, cv_text FROM user_profiles WHERE owner=?",
+                                 (owner,)).fetchone()
+
+    async def stream():
+        yield f"event: conversation\ndata: {json.dumps({'id': conv_id, 'title': title}, ensure_ascii=False)}\n\n"
+        try:
+            async for name, data in run_agent(store, owner, history, message,
+                                              dict(profile) if profile else None, deep_think):
+                if name == "final":
+                    ts = utcnow().isoformat()
+                    with store.conn:
+                        mid = store.conn.execute(
+                            "INSERT INTO chat_messages(conversation_id, role, content, meta_json, created_at) "
+                            "VALUES (?,?,?,?,?)",
+                            (conv_id, "assistant", data["content"],
+                             json.dumps(data["meta"], ensure_ascii=False), ts)).lastrowid
+                        store.conn.execute("UPDATE chat_conversations SET updated_at=? WHERE id=?",
+                                           (ts, conv_id))
+                    name, data = "done", {"message_id": mid}
+                yield f"event: {name}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+        except Exception:  # noqa: BLE001 - lỗi lạ không được làm treo UI đang chờ stream
+            log.exception("assistant chat failed")
+            err = {"code": "llm_error", "message": "Em gặp lỗi rồi, công chúa thử lại giúp em nha 🥺"}
+            yield f"event: error\ndata: {json.dumps(err, ensure_ascii=False)}\n\n"
+
+    # Client đóng tab/bấm Dừng -> Starlette ngừng gọi generator, câu trả lời dở không được lưu
+    return StreamingResponse(stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
