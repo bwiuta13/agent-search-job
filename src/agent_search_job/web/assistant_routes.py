@@ -12,6 +12,7 @@ import io
 import json
 import os
 import re
+import zipfile
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
@@ -116,9 +117,10 @@ async def delete_profile(owner: str = Depends(chat_owner)):
 
 
 @router.post("/api/assistant/profile/cv", dependencies=[Depends(same_origin)])
-async def upload_cv(file: UploadFile = File(...), owner: str = Depends(chat_owner)):
-    """CV PDF/DOCX -> chỉ lưu phần chữ (≤ 20.000 ký tự) vào hồ sơ; không lưu file gốc."""
-    data = await file.read(MAX_CV_BYTES + 1)
+def upload_cv(file: UploadFile = File(...), owner: str = Depends(chat_owner)):
+    """CV PDF/DOCX -> chỉ lưu phần chữ (≤ 20.000 ký tự) vào hồ sơ; không lưu file gốc.
+    Route sync để FastAPI chạy trong threadpool: pypdf/python-docx parse không chặn event loop."""
+    data = file.file.read(MAX_CV_BYTES + 1)
     if len(data) > MAX_CV_BYTES:
         raise HTTPException(400, "File CV tối đa 5MB thôi ạ")
     name = (file.filename or "").lower()
@@ -133,6 +135,9 @@ async def upload_cv(file: UploadFile = File(...), owner: str = Depends(chat_owne
             from pypdf import PdfReader
             text = "\n".join(p.extract_text() or "" for p in PdfReader(io.BytesIO(data)).pages)
         else:
+            with zipfile.ZipFile(io.BytesIO(data)) as z:  # chặn DOCX zip bomb trước khi parse
+                if sum(i.file_size for i in z.infolist()) > 50 * 1024 * 1024:
+                    raise HTTPException(400, "File CV bị lỗi, em không mở được ạ")
             from docx import Document
             doc = Document(io.BytesIO(data))
             text = "\n".join([p.text for p in doc.paragraphs]

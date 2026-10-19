@@ -8,6 +8,7 @@ import copy
 import io
 import json
 import re
+import zipfile
 from datetime import timedelta
 
 import pytest
@@ -189,6 +190,26 @@ class TestCvUpload:
         client = login(app)
         r = client.post("/api/assistant/profile/cv", files={"file": (name, data, "application/octet-stream")})
         assert r.status_code == 400 and msg in r.json()["detail"]
+
+    def test_docx_zip_bomb_rejected(self, app):
+        from docx import Document
+        client = login(app)
+        doc = Document()
+        doc.add_paragraph("Kinh nghiệm 3 năm viết content TikTok, Facebook cho thương hiệu mỹ phẩm")
+        buf = io.BytesIO()
+        doc.save(buf)
+        bomb = io.BytesIO()
+        with zipfile.ZipFile(bomb, "w", zipfile.ZIP_DEFLATED) as out, \
+                zipfile.ZipFile(io.BytesIO(buf.getvalue())) as src:
+            for item in src.infolist():
+                data = src.read(item.filename)
+                if item.filename == "word/document.xml":  # ~60MB khoảng trắng, nén còn vài chục KB
+                    pad = (b" " * (1024 * 1024) + b"<w:p/>") * 60
+                    data = data.replace(b"</w:body>", b"<w:p/>" + pad + b"</w:body>")
+                out.writestr(item.filename, data)
+        r = client.post("/api/assistant/profile/cv", files={"file": ("bomb.docx", bomb.getvalue(),
+                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document")})
+        assert r.status_code == 400 and "bị lỗi" in r.json()["detail"]
 
     def test_pdf_without_text_rejected(self, app):
         client = login(app)
