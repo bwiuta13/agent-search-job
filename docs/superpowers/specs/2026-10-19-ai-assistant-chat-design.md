@@ -28,7 +28,7 @@ Voice (nói → chữ), TTS, lip-sync, model nhân vật 3D thật, upload ảnh
 |---|---|---|
 | GreenNode tokenplan + `z-ai/glm-5.3` có tool calling + stream? | **Có.** Đã gọi thử thật: `tools` → `finish_reason: tool_calls`, tách đúng `query`/`salary_min_vnd` (~2,5s); `stream: true` trả `text/event-stream`, tool call về 1 mảnh, có `reasoning_content`; vòng 2 token đầu ~1,4s; persona "công chúa/em" tự nhiên | Spike `probe_toolcall.py` (scratchpad, không giữ lại) |
 | Quirk GLM-5.x | `tool_choice` chỉ dùng `auto`; thinking luôn bật (reasoning tính vào `max_tokens`); gửi lại `reasoning_content` trong assistant message chứa tool_calls; field reasoning có thể là `reasoning_content` hoặc `reasoning`; tool-call delta phải gom theo `index` | docs.z.ai function-calling / thinking-mode / stream-tool |
-| SDK | Giữ `httpx` thuần (codebase đang dùng, test mock bằng `respx`; SDK `openai` mới phụ thuộc `httpx2`) | github.com/openai/openai-python |
+| SDK | Giữ `httpx` thuần (codebase đang dùng, test giả `httpx.AsyncClient`; SDK `openai` mới phụ thuộc `httpx2`) | github.com/openai/openai-python |
 | Transport | SSE qua `POST` + `fetch`/`ReadableStream` + `AbortController` (không WebSocket, không `EventSource` vì chỉ GET) | MDN EventSource, FastAPI SSE docs |
 | Web search | **Tavily** (1.000 credit/tháng miễn phí, `country=vietnam`, `include_domains`, trả text sạch kèm URL). Chưa có key → tool trả `unavailable` | docs.tavily.com |
 | Three.js | **r186 / `three@0.186.1`**, vendor vào `/static`, importmap; 1 canvas toàn màn hình + scissor; Ready Player Me đã đóng (01/2026) → nhân vật sau này dùng VRM (`@pixiv/three-vrm`) hoặc GLB | npm registry, threejs.org manual |
@@ -45,11 +45,10 @@ FastAPI (web/assistant_routes.py)
   auth (current_user / guest cookie) → TTL cleanup → rate limit → agent.run(...)
 assistant/agent.py
   system prompt + 6 tool schema + vòng lặp stream ⇄ GLM-5.3 (GreenNode)
-  tool → MCPServer._dispatch (search/get_job/company/feedback) | SQL market_stats | web_search.py
-assistant/web_search.py
-  Tavily (httpx) + cache SQLite web_search_cache
+  tool → MCPServer._dispatch (search/get_job/company/feedback) | SQL market_stats | Tavily + cache (inline)
 storage/store.py
   bảng mới: chat_conversations, chat_messages, user_profiles, web_search_cache, assistant_usage
+  purge_expired_chat(ttl_hours) — gọi ở mỗi request API + lifespan (khởi động, mỗi giờ)
 ```
 
 ### File mới / sửa
@@ -57,18 +56,17 @@ storage/store.py
 | File | Vai trò |
 |---|---|
 | `src/agent_search_job/assistant/__init__.py` | package |
-| `src/agent_search_job/assistant/agent.py` | system prompt, `TOOLS` (OpenAI function schema), thực thi tool, vòng lặp agent dạng async generator sinh event |
-| `src/agent_search_job/assistant/web_search.py` | client Tavily + cache + làm sạch kết quả |
+| `src/agent_search_job/assistant/agent.py` | system prompt, `TOOLS` (OpenAI function schema), vòng lặp agent dạng async generator sinh event, thực thi 6 tool (gồm Tavily + cache, viết inline theo quy tắc không tách hàm dùng 1 lần) |
 | `src/agent_search_job/web/assistant_routes.py` | `APIRouter`: trang `/assistant`, chat SSE, conversations, profile, upload CV |
-| `src/agent_search_job/web/app.py` | `app.include_router(...)`; thêm mimetype `.glb` |
-| `src/agent_search_job/storage/store.py` | schema 5 bảng mới + method CRUD cần thiết |
+| `src/agent_search_job/web/app.py` | `lifespan` dọn chat quá hạn khi khởi động + mỗi giờ; `app.include_router(...)` cuối file; mimetype `.glb`, `.mjs` |
+| `src/agent_search_job/storage/store.py` | schema 5 bảng mới + `purge_expired_chat(ttl_hours)` (CRUD còn lại viết SQL inline trong route vì mỗi câu chỉ dùng 1 chỗ) |
 | `src/agent_search_job/web/templates/base.html` | block `header`/`footer`/`body_class` để trang assistant dùng shell toàn màn hình; link "Trợ lý AI" trên nav |
 | `src/agent_search_job/web/templates/assistant.html` | trang chat |
 | `src/agent_search_job/web/static/assistant/assistant.css` | style trang chat (dùng token màu `app.css`) |
 | `src/agent_search_job/web/static/assistant/chat.js` | UI chat, đọc SSE, lịch sử, hồ sơ, upload CV |
 | `src/agent_search_job/web/static/assistant/stage.js` | Three.js stage (orb + avatar slot) |
 | `src/agent_search_job/web/static/vendor/…` | `three@0.186.1` (build + addons cần dùng), `marked`, `DOMPurify` — pin version, ghi trong `vendor/VERSIONS.md` |
-| `scripts/purge.py` | dọn thêm chat/guest/cache/usage hết hạn |
+| `scripts/purge.py` | bản backup bỏ dữ liệu chat (VACUUM) |
 | `pyproject.toml` | thêm `pypdf`, `python-docx` |
 | `.env.example`, `README.md` | biến env mới + mục "Trợ lý AI" |
 | `tests/test_assistant.py` | test mới (mục 9) |
@@ -92,9 +90,9 @@ Quy tắc code (CLAUDE.md của user): **không tách hàm chỉ để phục v�
 ```
 
 - Shell toàn màn hình, nền gradient pastel + panel kính (`backdrop-filter`), font Bricolage Grotesque (tiêu đề, chữ gradient như ảnh mẫu) + Be Vietnam Pro; dùng token màu `--petal`, `--rose`, `--accent`… của `app.css`.
-- **Thanh icon trái**: logo · ✦ Chat mới · 💬 Lịch sử (ngăn kéo "Hội thoại trong 24 giờ qua", có nút xoá) · ⚙ Hồ sơ của công chúa (panel: ô "Giới thiệu bản thân", trạng thái CV, nút xoá CV) · ⌕ về Tìm việc · ⏻ Đăng xuất (ẩn với khách).
+- **Thanh icon trái**: logo · ✦ Chat mới · 💬 Lịch sử (ngăn kéo "Hội thoại trong 24 giờ qua", có nút xoá) · 👤 Hồ sơ của công chúa (panel: ô "Giới thiệu bản thân", trạng thái CV, nút xoá hồ sơ) · ⌕ về Tìm việc. Không có nút đăng xuất (app chưa có route logout).
 - **Góc phải trên**: chip Hồ sơ "Đã có CV" / "+ Thêm CV" (mở panel Hồ sơ).
-- **Trạng thái trống**: tiêu đề, orb ở giữa, chip gợi ý; `⋯` mở thêm ("So sánh 2 việc", "Lương content executive bao nhiêu?", "Review công ty …").
+- **Trạng thái trống**: tiêu đề, orb ở giữa, chip gợi ý; `⋯` hiện thêm chip ngay trong hàng ("So sánh 2 việc", "Lương content executive?", "Lương theo cấp bậc") — không dùng popup vì canvas 3D nằm trên panel.
 - **Khi đã chat**: orb thu nhỏ dời lên trên; thread giữa (max ~760px); composer dính đáy.
   - Tin nhắn của em: markdown (`marked` → `DOMPurify`), link mở tab mới `rel="noopener noreferrer"`, chỉ cho `http(s)` và đường dẫn tương đối.
   - Dòng trạng thái tool: "Em đang tìm việc…" → "✓ 12 kết quả".
@@ -112,10 +110,10 @@ Quy tắc code (CLAUDE.md của user): **không tách hàm chỉ để phục v�
 
 - Mỗi vòng: `POST {OPENAI_BASE_URL}/chat/completions` với `stream: true`, `tools`, `tool_choice: "auto"`, `temperature: 0.4`, `max_tokens` 3000 (Deep Think: 6000).
 - Đọc SSE từ GreenNode bằng `httpx.AsyncClient.stream` + `aiter_lines()`: `delta.content` → phát event `token`; `delta.tool_calls[i]` gom theo `index` (`id`, `name` ở mảnh đầu, nối `arguments`); đọc `reasoning_content` **hoặc** `reasoning` để gửi lại.
-- Có tool call → thêm assistant message (`content`, `tool_calls`, `reasoning_content`) → chạy từng tool (SQLite qua `asyncio.to_thread`) → thêm `{role: "tool", tool_call_id, content}` → vòng tiếp.
+- Có tool call → thêm assistant message (`content`, `tool_calls`, `reasoning_content`) → chạy từng tool (SQLite trực tiếp, như các route hiện có) → thêm `{role: "tool", tool_call_id, content}` → vòng tiếp. Kết quả tool cắt ≤ 12.000 ký tự.
 - `json.loads(arguments)` lỗi hoặc tool raise → nội dung tool là chuỗi lỗi để model tự xử lý.
 - Tối đa **6 vòng có tool** (Deep Think: **10**). Hết vòng → gọi thêm 1 lần **không** gửi `tools` để buộc trả lời.
-- Client ngắt kết nối (`request.is_disconnected()`) → dừng vòng lặp, không lưu câu trả lời dở.
+- Client ngắt kết nối (bấm Dừng/đóng tab) → Starlette ngừng generator ở lần ghi kế tiếp → vòng lặp dừng, không lưu câu trả lời dở.
 - Ngữ cảnh: system prompt + **10 tin nhắn gần nhất** của hội thoại (chỉ text user/assistant) + câu hỏi mới. Không gửi lại kết quả tool cũ.
 
 ### 5.2 Tool cho LLM
@@ -127,7 +125,7 @@ Quy tắc code (CLAUDE.md của user): **không tách hàm chỉ để phục v�
 | `get_company` | `company_id` | `_dispatch("vn_jobs_get_company")` | hồ sơ + ≤10 job đang tuyển | `jobs` |
 | `get_company_feedback` | `company_id` | `_dispatch("vn_jobs_get_company_feedback")` | nguồn, rating, số review, confidence, link; `unavailable` nếu không có | `sources` |
 | `market_stats` | `group_by` ∈ {`role_cluster`,`job_level`,`district`,`company`}, lọc tuỳ chọn `role_clusters[]`, `job_levels[]`, `districts[]`, `query` | SQL trên job `is_active=1` | mỗi nhóm: `count`, lương min/trung vị/max (từ job có lương), top 10 nhóm | — |
-| `company_web_search` | `company_name` (≤120), `topic` ∈ {`overview`,`reviews`,`news`} | `web_search.py` (mục 5.4) | ≤5 kết quả `{title, url, domain, snippet≤500}`, tổng ≤3.000 ký tự, bọc `<search_results>` | `sources` |
+| `company_web_search` | `company_name` (≤120), `topic` ∈ {`overview`,`reviews`,`news`} | Tavily trong `agent.py` (mục 5.4) | ≤5 kết quả `{title, url, domain, snippet≤500}`, tổng ≤3.000 ký tự, bọc `<search_results>` | `sources` |
 
 Hồ sơ người dùng **không** là tool: `about` + `cv_text` (tổng ≤ 4.000 ký tự) chèn sẵn vào system prompt, kèm nhãn "dữ liệu do người dùng cung cấp".
 
@@ -142,7 +140,7 @@ Event `tool_start` có `label` tiếng Việt để UI hiển thị ("Em đang t
 - Ngày hôm nay, phạm vi dữ liệu (Content/Marketing TP.HCM, 7 nguồn), danh sách giá trị hợp lệ của role cluster/cấp bậc/quận.
 - Khi tư vấn theo hồ sơ: so khớp kỹ năng/kinh nghiệm với yêu cầu JD, chỉ ra điểm hợp và điểm thiếu; nếu chưa có hồ sơ → gợi ý công chúa thêm CV/giới thiệu bản thân.
 
-### 5.4 Web search (Tavily)
+### 5.4 Web search (Tavily — viết inline trong nhánh tool `company_web_search` của `agent.py`)
 
 - `POST https://api.tavily.com/search`, header `Authorization: Bearer {TAVILY_API_KEY}`, body: `query` do **backend dựng** từ `company_name` + topic (vd. `"{company} review môi trường làm việc"`), `country: "vietnam"`, `search_depth: "basic"`, `max_results: 5`, `include_domains` ưu tiên (`itviec.com, topcv.vn, reviewcongty.com, glassdoor.com, vietnamworks.com, masothue.com, cafef.vn, vnexpress.net`) với `topic=reviews`; timeout 10s; 1 lần retry khi 429/5xx.
 - LLM không bao giờ cung cấp URL; không fetch link trong kết quả.
@@ -176,7 +174,7 @@ Tất cả dưới `current_user` (cookie session hoặc bearer); khách (public
 | `done` | `{message_id}` |
 | `error` | `{code, message}` (`llm_not_configured`, `llm_error`) |
 
-Lỗi xác định được **trước khi** stream (body sai → 400 `bad_request`, vượt quota → 429 `rate_limited`, hội thoại không thuộc owner → 404, `Origin` sai → 403) trả HTTP JSON `{code, message}`, không mở stream; `chat.js` xử lý cả hai dạng.
+Lỗi xác định được **trước khi** stream (body sai → 400, vượt quota → 429, hội thoại không thuộc owner → 404, `Origin` sai → 403, khách thiếu cookie → 401) trả HTTP JSON chuẩn FastAPI `{"detail": "…"}`, không mở stream; `chat.js` xử lý cả hai dạng.
 
 Response dùng `StreamingResponse(media_type="text/event-stream")` với header `Cache-Control: no-cache`, `X-Accel-Buffering: no` (Nginx trên GCE không buffer).
 
@@ -227,10 +225,10 @@ CREATE TABLE IF NOT EXISTS assistant_usage (
 
 ### Vòng đời dữ liệu
 
-- **Hội thoại (mọi người dùng) tự xoá 24 giờ sau tin nhắn cuối** (`ASSISTANT_CHAT_TTL_HOURS`, mặc định 24): `DELETE FROM chat_conversations WHERE updated_at < now - TTL` chạy đầu mỗi request `POST /api/assistant/chat`, `GET /api/assistant/conversations` và `GET /api/assistant/conversations/{id}` → không ai thấy dữ liệu quá hạn, DB không phình. `scripts/purge.py` dọn thêm.
+- **Hội thoại (mọi người dùng) tự xoá 24 giờ sau tin nhắn cuối** (`ASSISTANT_CHAT_TTL_HOURS`, mặc định 24) qua `JobStore.purge_expired_chat`: chạy đầu **mọi** request API trợ lý (dependency `chat_owner`) → không ai thấy dữ liệu quá hạn; và trong `lifespan` của app khi khởi động + **mỗi giờ** → kể cả không ai dùng, chat không nằm trong DB quá TTL + 1 giờ. Bản backup của `scripts/purge.py` bỏ dữ liệu chat.
 - **Hồ sơ/CV**: người đã đăng nhập giữ tới khi tự xoá; khách (`guest:*`) xoá sau 24 giờ không cập nhật (cùng câu dọn).
-- `web_search_cache`: xoá dòng `expires_at < now` khi dọn.
-- `assistant_usage`: xoá dòng cũ hơn 2 ngày khi dọn.
+- `web_search_cache`: `purge_expired_chat` xoá dòng `expires_at < now`.
+- `assistant_usage`: `purge_expired_chat` xoá dòng cũ hơn 2 ngày.
 - **Không lưu file CV gốc**: chỉ trích chữ (`pypdf` / `python-docx`), cắt ≤ 20.000 ký tự; kiểm tra đuôi **và** magic bytes (`%PDF-` / `PK\x03\x04`); không có chữ (PDF scan) → 400 "Em không đọc được chữ trong file này ạ, công chúa dán nội dung vào ô Hồ sơ giúp em nhé".
 - Tiêu đề hội thoại = 60 ký tự đầu câu hỏi đầu (không gọi LLM).
 - Guest cookie `vnjobs_guest`: `secrets.token_urlsafe(24)`, HttpOnly, SameSite=Lax, Secure khi HTTPS, hạn 1 ngày.
@@ -265,7 +263,7 @@ CREATE TABLE IF NOT EXISTS assistant_usage (
 
 ## 10. Kiểm thử
 
-`tests/test_assistant.py`, offline: LLM và Tavily giả lập bằng `respx` (stream SSE giả); DB `:memory:` theo kiểu `TestWebAPI._client()`; test qua route thật, không tách hàm phục vụ test.
+`tests/test_assistant.py`, offline: LLM và Tavily giả bằng `FakeHTTP` thay `httpx.AsyncClient` (cùng kiểu `TestNLQuery` hiện có; `respx` chưa cài nên không dùng); DB `:memory:` theo kiểu `TestWebAPI._client()`; test qua route thật, không tách hàm phục vụ test.
 
 1. Chat: LLM giả vòng 1 trả tool call `search_jobs`, vòng 2 trả chữ → thứ tự event `conversation → tool_start → tool_end(jobs đúng DB) → token… → done`; 2 tin nhắn được lưu; request vòng 2 có message `tool` và `reasoning_content`.
 2. Hết số vòng → request cuối không có `tools`.
@@ -273,10 +271,10 @@ CREATE TABLE IF NOT EXISTS assistant_usage (
 4. `company_web_search`: Tavily giả; lần 2 lấy cache (không gọi HTTP); thiếu key → `unavailable`; quota web vượt → `unavailable`.
 5. Upload CV: PDF/DOCX nhỏ tạo trong test → `cv_chars > 0`; sai đuôi/magic, > 5MB, không có chữ → 400.
 6. Phân quyền: user B không đọc/xoá được hội thoại của A (404); khách nhận cookie `vnjobs_guest` và chỉ thấy hội thoại của mình.
-7. TTL: hội thoại có `updated_at` cũ hơn 24 giờ biến mất ở lần gọi API kế tiếp; hồ sơ user đăng nhập vẫn còn, hồ sơ khách cũ bị xoá.
+7. TTL: hội thoại có `updated_at` cũ hơn 24 giờ biến mất ở lần gọi API kế tiếp và khi app khởi động (lifespan); hồ sơ user đăng nhập vẫn còn, hồ sơ khách cũ bị xoá.
 8. Rate limit: vượt quota tin nhắn → 429.
 9. LLM chưa cấu hình → event `error llm_not_configured`.
-10. `scripts/purge.py` dọn chat/cache/usage hết hạn.
+10. `scripts/purge.py`: file backup không còn chat (đã VACUUM), DB chính giữ chat còn hạn.
 
 Frontend: kiểm tra bằng trình duyệt tích hợp (preview `web-pink-preview`, cổng 8766): trạng thái trống, đang stream (orb đổi state, thẻ job, nguồn), mobile 375px, console không lỗi, giả lập không WebGL → orb CSS.
 
