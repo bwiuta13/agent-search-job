@@ -15,3 +15,5 @@ build/
 file:*
 data/*.db-shm
 data/*.db-wal
+# vendor three.js: thư mục build/ chứa three.module.js + three.core.js phải được commit (không bị luật build/ ở trên chặn)
+!src/agent_search_job/web/static/vendor/three/build/

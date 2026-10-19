@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import mimetypes
 import os
 import sqlite3
 from contextlib import asynccontextmanager
@@ -62,6 +63,9 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Agent Search Job", version="0.1.0", docs_url=None, redoc_url=None,
               lifespan=lifespan)
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+# .mjs (DOMPurify ESM) phải là JS cho <script type=module>; .glb cho nhân vật 3D sau này
+mimetypes.add_type("text/javascript", ".mjs")
+mimetypes.add_type("model/gltf-binary", ".glb")
 # CSS, icon sprite (Lucide), favicon — public, không chứa dữ liệu
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 

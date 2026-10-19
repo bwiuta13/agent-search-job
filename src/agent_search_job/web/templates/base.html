@@ -12,8 +12,10 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&family=Bricolage+Grotesque:opsz,wght@12..96,700;12..96,800&display=swap">
   <link rel="stylesheet" href="/static/app.css?v={{ asset_v('app.css') }}">
+  {% block head %}{% endblock %}
 </head>
-<body>
+<body class="{% block body_class %}{% endblock %}">
+  {% block header %}
   {% if user %}
   {% set path = request.url.path %}
   <header class="site">
@@ -25,16 +27,20 @@
       <nav>
         <a href="/search" {% if path == '/search' %}aria-current="page"{% endif %}>{{ icon('search') }}Tìm kiếm</a>
         <a href="/companies" {% if path == '/companies' %}aria-current="page"{% endif %}>{{ icon('building') }}Công ty</a>
+        <a href="/assistant">{{ icon('sparkles') }}Trợ lý AI</a>
         {% if not user.guest %}<a href="/saved" {% if path == '/saved' %}aria-current="page"{% endif %}>{{ icon('bookmark') }}Việc đã lưu</a>{% endif %}
       </nav>
       <span class="who">{{ icon('user') }}{{ user.email or 'Khách' }}</span>
     </div>
   </header>
   {% endif %}
+  {% endblock %}
   <main>{% block content %}{% endblock %}</main>
+  {% block footer %}
   <footer class="site">
     Dữ liệu thu thập từ TopCV, VietnamWorks, LinkedIn, ITviec, CareerViet ·
     Website kín (invite-only) · Luôn kiểm tra trang nguồn trước khi ứng tuyển
   </footer>
+  {% endblock %}
 </body>
 </html>

@@ -886,3 +886,39 @@ def test_purge_backup_has_no_chat(tmp_path):
     assert b"20 tri" not in raw and b"CVKHACH" not in raw  # đã VACUUM, không còn trong trang trống
     assert store.conn.execute("SELECT COUNT(*) FROM chat_messages").fetchone()[0] == 1  # DB chính giữ chat còn hạn
     assert store.conn.execute("SELECT COUNT(*) FROM user_profiles WHERE owner LIKE 'guest:%'").fetchone()[0] == 1
+
+
+class TestPage:
+    def test_page_renders_shell_and_importmap(self, app):
+        client = login(app)
+        r = client.get("/assistant")
+        assert r.status_code == 200
+        assert '"three": "/static/vendor/three/build/three.module.js"' in r.text
+        for marker in ('id="orb-slot"', 'id="avatar-slot"', 'id="thread"', 'id="composer"',
+                       'id="deep"', 'data-guest="false"', "/static/assistant/chat.js"):
+            assert marker in r.text
+        assert "Voice" not in r.text
+        assert "vnjobs_guest" not in r.headers.get("set-cookie", "")
+        assert 'href="/assistant"' in client.get("/search").text  # nav các trang cũ
+
+    def test_guest_gets_cookie_then_api_works(self, public_app):
+        guest = TestClient(public_app.app)
+        r = guest.get("/assistant")
+        assert r.status_code == 200 and 'data-guest="true"' in r.text
+        assert re.search(r"vnjobs_guest=[A-Za-z0-9_-]{32}", r.headers["set-cookie"])
+        assert "HttpOnly" in r.headers["set-cookie"]
+        assert guest.get("/api/assistant/conversations").status_code == 200
+
+    @pytest.mark.parametrize("path", [
+        "/static/vendor/three/build/three.module.js",
+        "/static/vendor/three/build/three.core.js",
+        "/static/vendor/three/examples/jsm/environments/RoomEnvironment.js",
+        "/static/vendor/three/examples/jsm/capabilities/WebGL.js",
+        "/static/vendor/three/examples/jsm/loaders/GLTFLoader.js",
+        "/static/vendor/three/examples/jsm/utils/BufferGeometryUtils.js",
+        "/static/vendor/marked/marked.esm.js",
+        "/static/vendor/dompurify/purify.es.mjs",
+    ])
+    def test_vendor_modules_served_as_js(self, app, path):
+        r = login(app).get(path)
+        assert r.status_code == 200 and "javascript" in r.headers["content-type"]

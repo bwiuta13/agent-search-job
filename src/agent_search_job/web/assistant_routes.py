@@ -13,16 +13,17 @@ import json
 import logging
 import os
 import re
+import secrets
 import zipfile
 from html import unescape
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 
 from ..assistant.agent import run_agent
 from ..domain.models import utcnow
-from .app import _uid, current_user, get_store
+from .app import _uid, current_user, get_store, templates
 
 router = APIRouter()
 GUEST_COOKIE = "vnjobs_guest"
@@ -50,6 +51,16 @@ def chat_owner(request: Request, user: dict = Depends(current_user)) -> str:
         owner = f"user:{_uid(store, user['email'])}"
     store.purge_expired_chat(int(os.environ.get("ASSISTANT_CHAT_TTL_HOURS") or 24))
     return owner
+
+
+@router.get("/assistant", response_class=HTMLResponse)
+async def assistant_page(request: Request, user: dict = Depends(current_user)):
+    resp = templates.TemplateResponse(request, "assistant.html", {"user": user})
+    if user.get("guest") and not GUEST_TOKEN.fullmatch(request.cookies.get(GUEST_COOKIE, "")):
+        # khách (public mode): cookie riêng làm owner cho lịch sử/hồ sơ, sống 1 ngày như dữ liệu chat
+        resp.set_cookie(GUEST_COOKIE, secrets.token_urlsafe(24), httponly=True, samesite="lax",
+                        secure=request.url.scheme == "https", max_age=86400)
+    return resp
 
 
 @router.get("/api/assistant/conversations")
