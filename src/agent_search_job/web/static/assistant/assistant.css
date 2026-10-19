@@ -11,7 +11,7 @@
     #fdf5f8;
 }
 .assistant-page.has-chat { --orb: 76px; }
-.assistant-page > main { height: 100%; }
+.assistant-page > main { height: 100%; max-width: none; margin: 0; padding: 0; } /* thắng `main` của app.css (cả bản ≤640px) nhờ specificity cao hơn */
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
 /* canvas Three.js nằm trên panel kính (không bị backdrop-filter làm mờ), không nhận click */
@@ -117,6 +117,7 @@
   background: linear-gradient(#fff, #fff) padding-box, linear-gradient(90deg, #ffd9bd, #f9b9d9, #cdd9ff) border-box;
   box-shadow: 0 12px 40px -12px rgba(194, 54, 107, .3);
 }
+.as-composer:focus-within { box-shadow: 0 0 0 3px rgba(238, 148, 179, .55), 0 12px 40px -12px rgba(194, 54, 107, .3); }
 .as-composer textarea { display: block; width: 100%; max-height: 200px; padding: 4px 6px 10px; border: 0; outline: none; resize: none; background: transparent; font: 15px/1.5 var(--font-body); color: var(--ink); }
 .as-tools { display: flex; align-items: center; gap: 8px; }
 .as-flex { flex: 1; }
@@ -151,7 +152,7 @@
 .as-history-open { flex: 1; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line); background: #fff; text-align: left; font: 500 14px var(--font-body); color: var(--ink); cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .as-history-del { padding: 0 8px; border: 0; background: none; color: var(--muted); cursor: pointer; }
 
-@media (max-width: 1099px) { .as-avatar-slot { display: none; } }
+@media (max-width: 1319px) { .as-avatar-slot { display: none; } }
 @media (max-width: 767px) {
   .assistant-page { --orb: 200px; }
   .assistant-page.has-chat { --orb: 56px; }
