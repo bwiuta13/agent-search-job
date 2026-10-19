@@ -155,6 +155,34 @@ def make_pdf(text: str) -> bytes:
     return out
 
 
+DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+DOCX_CONTENT_TYPES = (
+    b'<?xml version="1.0" encoding="UTF-8"?>'
+    b'<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+    b'<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+    b'<Default Extension="xml" ContentType="application/xml"/>'
+    b'<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-'
+    b'officedocument.wordprocessingml.document.main+xml"/></Types>')
+DOCX_RELS = (
+    b'<?xml version="1.0" encoding="UTF-8"?>'
+    b'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+    b'<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/'
+    b'relationships/officeDocument" Target="word/document.xml"/></Relationships>')
+
+
+def make_docx(body: bytes) -> bytes:
+    """.docx tối thiểu (zipfile thuần): word/document.xml UTF-8 với body nằm trong <w:body>."""
+    xml = (b'<?xml version="1.0" encoding="UTF-8"?>'
+           b'<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+           b'<w:body>' + body + b'</w:body></w:document>')
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("[Content_Types].xml", DOCX_CONTENT_TYPES)
+        z.writestr("_rels/.rels", DOCX_RELS)
+        z.writestr("word/document.xml", xml)
+    return buf.getvalue()
+
+
 class TestCvUpload:
     def test_pdf_cv_is_extracted_and_original_not_kept(self, app):
         client = login(app)
@@ -168,16 +196,15 @@ class TestCvUpload:
         assert "%PDF" not in row["cv_text"]
 
     def test_docx_cv_keeps_about(self, app):
-        from docx import Document
         client = login(app)
         client.put("/api/assistant/profile", json={"about": "Muốn làm Quận 1"})
-        buf = io.BytesIO()
-        doc = Document()
-        doc.add_paragraph("Kinh nghiệm 3 năm viết content TikTok, Facebook cho thương hiệu mỹ phẩm")
-        doc.save(buf)
-        r = client.post("/api/assistant/profile/cv", files={"file": ("CV Lan.docx", buf.getvalue(),
-                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document")})
+        docx = make_docx("<w:p><w:r><w:t>Kinh nghiệm 3 năm viết content TikTok, Facebook "
+                         "cho thương hiệu mỹ phẩm</w:t></w:r></w:p>"
+                         "<w:tbl><w:tr><w:tc><w:p><w:r><w:t>Canva</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"
+                         .encode())
+        r = client.post("/api/assistant/profile/cv", files={"file": ("CV Lan.docx", docx, DOCX_MIME)})
         assert r.status_code == 200 and "mỹ phẩm" in r.json()["preview"]
+        assert "Canva" in r.json()["preview"]
         assert client.get("/api/assistant/profile").json()["about"] == "Muốn làm Quận 1"
 
     @pytest.mark.parametrize("name,data,msg", [
@@ -192,23 +219,19 @@ class TestCvUpload:
         assert r.status_code == 400 and msg in r.json()["detail"]
 
     def test_docx_zip_bomb_rejected(self, app):
-        from docx import Document
         client = login(app)
-        doc = Document()
-        doc.add_paragraph("Kinh nghiệm 3 năm viết content TikTok, Facebook cho thương hiệu mỹ phẩm")
+        pad = (b" " * (1024 * 1024) + b"<w:p/>") * 12  # ~12MB XML hợp lệ, upload nén còn vài chục KB
+        docx = make_docx("<w:p><w:r><w:t>Kinh nghiệm 3 năm viết content TikTok</w:t></w:r></w:p>".encode() + pad)
+        assert len(docx) < 200 * 1024
+        r = client.post("/api/assistant/profile/cv", files={"file": ("bomb.docx", docx, DOCX_MIME)})
+        assert r.status_code == 400 and "bị lỗi" in r.json()["detail"]
+
+    def test_docx_without_document_xml_rejected(self, app):
+        client = login(app)
         buf = io.BytesIO()
-        doc.save(buf)
-        bomb = io.BytesIO()
-        with zipfile.ZipFile(bomb, "w", zipfile.ZIP_DEFLATED) as out, \
-                zipfile.ZipFile(io.BytesIO(buf.getvalue())) as src:
-            for item in src.infolist():
-                data = src.read(item.filename)
-                if item.filename == "word/document.xml":  # ~60MB khoảng trắng, nén còn vài chục KB
-                    pad = (b" " * (1024 * 1024) + b"<w:p/>") * 60
-                    data = data.replace(b"</w:body>", b"<w:p/>" + pad + b"</w:body>")
-                out.writestr(item.filename, data)
-        r = client.post("/api/assistant/profile/cv", files={"file": ("bomb.docx", bomb.getvalue(),
-                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document")})
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr("word/styles.xml", b"<w:styles/>")
+        r = client.post("/api/assistant/profile/cv", files={"file": ("empty.docx", buf.getvalue(), DOCX_MIME)})
         assert r.status_code == 400 and "bị lỗi" in r.json()["detail"]
 
     def test_pdf_without_text_rejected(self, app):

@@ -13,6 +13,7 @@ import json
 import os
 import re
 import zipfile
+from html import unescape
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
@@ -119,7 +120,7 @@ async def delete_profile(owner: str = Depends(chat_owner)):
 @router.post("/api/assistant/profile/cv", dependencies=[Depends(same_origin)])
 def upload_cv(file: UploadFile = File(...), owner: str = Depends(chat_owner)):
     """CV PDF/DOCX -> chỉ lưu phần chữ (≤ 20.000 ký tự) vào hồ sơ; không lưu file gốc.
-    Route sync để FastAPI chạy trong threadpool: pypdf/python-docx parse không chặn event loop."""
+    Route sync để FastAPI chạy trong threadpool (parse không chặn event loop)."""
     data = file.file.read(MAX_CV_BYTES + 1)
     if len(data) > MAX_CV_BYTES:
         raise HTTPException(400, "File CV tối đa 5MB thôi ạ")
@@ -135,14 +136,15 @@ def upload_cv(file: UploadFile = File(...), owner: str = Depends(chat_owner)):
             from pypdf import PdfReader
             text = "\n".join(p.extract_text() or "" for p in PdfReader(io.BytesIO(data)).pages)
         else:
-            with zipfile.ZipFile(io.BytesIO(data)) as z:  # chặn DOCX zip bomb trước khi parse
-                if sum(i.file_size for i in z.infolist()) > 50 * 1024 * 1024:
-                    raise HTTPException(400, "File CV bị lỗi, em không mở được ạ")
-            from docx import Document
-            doc = Document(io.BytesIO(data))
-            text = "\n".join([p.text for p in doc.paragraphs]
-                             + [c.text for t in doc.tables for row in t.rows for c in row.cells])
-    except Exception:  # noqa: BLE001 - file hỏng/mã hoá -> báo lỗi thân thiện
+            with zipfile.ZipFile(io.BytesIO(data)) as z, z.open("word/document.xml") as f:
+                xml = f.read(10 * 1024 * 1024 + 1)  # đọc có giới hạn: chặn DOCX zip bomb
+            if len(xml) > 10 * 1024 * 1024:
+                raise ValueError("document.xml quá lớn")
+            xml_text = xml.decode("utf-8", errors="replace")
+            xml_text = re.sub(r"</w:p>|<w:br[^<>]*/>|<w:cr/>", "\n", xml_text)
+            xml_text = xml_text.replace("<w:tab/>", " ")
+            text = unescape(re.sub(r"<[^<>]*>", "", xml_text))  # [^<>] để không backtrack bậc hai
+    except Exception:  # noqa: BLE001 - file hỏng/mã hoá/zip bomb -> báo lỗi thân thiện
         raise HTTPException(400, "File CV bị lỗi, em không mở được ạ")
     text = re.sub(r"[ \t]+", " ", re.sub(r"\n\s*\n+", "\n\n", text)).strip()[:20000]
     if len(text) < 30:
