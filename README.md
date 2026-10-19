@@ -25,7 +25,7 @@ src/agent_search_job/
   web/          FastAPI: pages + REST API + /mcp endpoint
   mcp/          MCP server (JSON-RPC) + contracts (validation, giới hạn)
 scripts/        crawl.py, enrich_companies.py, serve.py, show_token.py
-tests/          45 test (normalize, storage, MCP protocol, web API) — chạy offline
+tests/          normalize, storage, MCP protocol, web API, trợ lý AI — chạy offline
 ```
 
 ## Quick start
@@ -220,10 +220,27 @@ Mở trang chi tiết việc → hệ thống gọi LLM phân tích JD gốc th�
 
 Lưu ý: LLM chỉ chạy cho job có JD ≥ 80 ký tự (hiện chỉ VietnamWorks có JD đầy đủ; TopCV/LinkedIn listing không kèm JD — cần fetch trang chi tiết nguồn, nằm trong backlog).
 
+## Trợ lý AI (`/assistant`)
+
+Trang chat (link "Trợ lý AI" trên thanh menu): người dùng là "công chúa", trợ lý xưng "em". Agent GLM
+(`AI_TEXT_MODEL`, qua GreenNode) **tự gọi tool** rồi trả lời dạng stream (SSE):
+
+| Tool | Dữ liệu |
+|---|---|
+| `search_jobs`, `get_jobs`, `get_company`, `get_company_feedback` | DB job (dùng lại tool MCP `vn_jobs_*`) |
+| `market_stats` | số việc + lương thấp/trung vị/cao theo nhóm nghề, cấp bậc, quận, công ty |
+| `company_web_search` | Tavily (`TAVILY_API_KEY`), cache 7 ngày (tin tức 24 giờ), có nguồn |
+
+- **Deep Think**: cho agent tối đa 10 vòng gọi tool (mặc định 6) và câu trả lời dài hơn.
+- **Hồ sơ / CV**: ô "Giới thiệu bản thân" + upload CV PDF/DOCX ≤ 5MB — chỉ lưu phần chữ, không lưu file gốc. PDF đọc bằng `pypdf`; DOCX đọc trực tiếp `word/document.xml` trong file zip có giới hạn kích thước giải nén (không dùng python-docx).
+- **Dữ liệu chat tự xoá** 24 giờ sau tin nhắn cuối (`ASSISTANT_CHAT_TTL_HOURS`): dọn khi khởi động, mỗi giờ khi server chạy và ở mỗi request API; bản backup của `make purge` không chứa chat và hồ sơ khách.
+- **Giới hạn**: `ASSISTANT_DAILY_MESSAGES` (100), `ASSISTANT_DAILY_WEB_SEARCHES` (20) mỗi người mỗi ngày.
+- **3D**: Three.js r186 vendor trong `src/agent_search_job/web/static/vendor` (xem `VERSIONS.md`); `src/agent_search_job/web/static/assistant/stage.js` vẽ quả cầu (lõi màu bọc vỏ kính) và có sẵn ô nhân vật góc dưới trái — gắn nhân vật bằng `stage.setCharacter("/static/assistant/<file>.glb")`.
+
 ## Test
 
 ```bash
-python -m pytest tests/ -q    # 45 test, chạy offline với fixtures, không cần mạng
+python -m pytest tests/ -q    # chạy offline với fixtures, không cần mạng
 ```
 
 ## Nguồn dữ liệu (đã verify 15/10/2026)
