@@ -12,7 +12,8 @@
 }
 .assistant-page.has-chat { --orb: 76px; }
 .assistant-page > main { height: 100%; max-width: none; margin: 0; padding: 0; } /* thắng `main` của app.css (cả bản ≤640px) nhờ specificity cao hơn */
-.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+/* đang chat: tiêu đề ẩn khỏi mắt nhưng vẫn là H1 cho trình đọc màn hình */
+.sr-only, .has-chat .as-title { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
 /* canvas Three.js nằm trên panel kính (không bị backdrop-filter làm mờ), không nhận click */
 #stage { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 2; }
@@ -72,7 +73,7 @@
 .as-thread { display: none; flex: 1; min-height: 0; overflow-y: auto; padding: 4px 4px 12px; }
 .has-chat .as-thread { display: flex; flex-direction: column; gap: 14px; }
 .has-chat .as-hero { flex: 0 0 auto; }
-.has-chat .as-title, .has-chat .as-suggest { display: none; }
+.has-chat .as-suggest { display: none; }
 .as-thread > *, .as-dock { width: 100%; max-width: 760px; margin-inline: auto; }
 
 .as-msg { display: flex; flex-direction: column; gap: 8px; }
@@ -86,9 +87,10 @@
 .as-bubble ul, .as-bubble ol { padding-left: 20px; }
 .as-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
 .as-steps:empty { display: none; }
-.as-steps li.run::before { content: "◌ "; animation: blink 1s infinite; }
 .as-steps li.ok::before { content: "✓ "; color: var(--mint); }
 .as-steps li.fail::before { content: "! "; color: var(--warn); }
+.as-thinking { margin: 0; font-size: 13px; color: var(--muted); }
+.as-steps li.run::before, .as-thinking::before { content: "◌ "; animation: blink 1s infinite; }
 @keyframes blink { 50% { opacity: .3; } }
 .as-jobs { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
 .as-job { display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; border-radius: 14px; background: #fff; border: 1px solid var(--line); box-shadow: var(--shadow); }
@@ -117,7 +119,8 @@
   background: linear-gradient(#fff, #fff) padding-box, linear-gradient(90deg, #ffd9bd, #f9b9d9, #cdd9ff) border-box;
   box-shadow: 0 12px 40px -12px rgba(194, 54, 107, .3);
 }
-.as-composer:focus-within { box-shadow: 0 0 0 3px rgba(238, 148, 179, .55), 0 12px 40px -12px rgba(194, 54, 107, .3); }
+/* viền focus bằng outline màu accent: tương phản ≥ 3:1 với nền hồng và vẫn hiện ở chế độ forced-colors (box-shadow thì bị bỏ) */
+.as-composer:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
 .as-composer textarea { display: block; width: 100%; max-height: 200px; padding: 4px 6px 10px; border: 0; outline: none; resize: none; background: transparent; font: 15px/1.5 var(--font-body); color: var(--ink); }
 .as-tools { display: flex; align-items: center; gap: 8px; }
 .as-flex { flex: 1; }
@@ -162,6 +165,7 @@
   box-shadow: 0 20px 60px -20px rgba(122, 40, 76, .35);
 }
 .as-drawer[hidden] { display: none; }
+.as-drawer:focus-visible { outline: none; } /* focus vào cả ngăn khi mở (đọc nhãn ngăn), Tab tiếp mới tới nút */
 .as-drawer header { display: flex; align-items: center; justify-content: space-between; }
 .as-drawer h2 { margin: 0; font-size: 18px; }
 .as-drawer header button { border: 0; background: none; font-size: 20px; color: var(--muted); cursor: pointer; }
@@ -172,6 +176,8 @@
 .as-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 .as-btn.ghost { background: transparent; }
 .as-note { margin: 0; font-size: 13px; color: var(--muted); }
+.as-status { color: var(--warn); }
+.as-status:empty { margin-bottom: -12px; } /* dòng báo lỗi trống không chiếm thêm 1 khoảng gap của ngăn */
 .as-history { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .as-history li { display: flex; gap: 6px; }
 .as-history-open { flex: 1; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line); background: #fff; text-align: left; font: 500 14px var(--font-body); color: var(--ink); cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -188,6 +194,6 @@
   .as-tool span { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .as-orb-css, .as-steps li.run::before { animation: none; }
+  .as-orb-css, .as-steps li.run::before, .as-thinking::before { animation: none; }
   .as-orb-slot, .as-orb-reflect { transition: none; }
 }

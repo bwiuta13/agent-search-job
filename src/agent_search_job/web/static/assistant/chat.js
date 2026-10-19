@@ -11,7 +11,11 @@ const el = (tag, cls, text) => {
 };
 const thread = $("#thread"), input = $("#input"), sendBtn = $("#send"), deepBtn = $("#deep");
 const guest = $(".as-shell").dataset.guest === "true";
-let convId = null, controller = null, stage = null;
+let convId = null, controller = null, stage = null, opener = null;
+// Bám đáy khi đang stream: chỉ cuộn theo khi công chúa đang ở gần cuối hội thoại, đang kéo lên đọc thì để yên.
+let stick = true;
+thread.addEventListener("scroll", () => { stick = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 60; });
+const follow = () => { if (stick) thread.scrollTop = thread.scrollHeight; };
 // Chỉ hiện thông báo lỗi khi nó là chuỗi do API của mình trả về (detail / SSE error.message); còn lại (mạng, JSON hỏng, detail dạng mảng 422) dùng câu tiếng Việt chung.
 const ERR_GENERIC = "Em gặp lỗi rồi, công chúa thử lại giúp em nha 🥺";
 class ApiError extends Error {}
@@ -105,18 +109,19 @@ const addMessage = (role, text = "") => {
   return wrap;
 };
 
+// Thẻ job/nguồn đã được server bỏ trùng và giới hạn số lượng (tool_end và meta lưu giống nhau) -> vẽ thẳng.
+// Thẻ, nguồn nằm TRÊN bong bóng chữ: chữ đang stream luôn ở đáy tin nhắn, chỗ mắt (và follow()) đang nhìn.
 const addJobs = (wrap, jobs) => {
   if (!jobs?.length) return;
-  const box = wrap.querySelector(".as-jobs") || wrap.appendChild(el("div", "as-jobs"));
+  const box = wrap.querySelector(".as-jobs") || wrap.insertBefore(el("div", "as-jobs"), wrap.querySelector(".as-sources, .as-bubble"));
+  // không có salary_text thì ghép từ số: lẻ tới 0,1 triệu, dưới 1 triệu tính bằng nghìn
+  const vnd = (v) => (v >= 1e6 ? `${(v / 1e6).toLocaleString("vi-VN", { maximumFractionDigits: 1 })} triệu` : `${Math.round(v / 1e3)} nghìn`);
   for (const j of jobs) {
-    if (box.querySelector(`[data-job="${j.job_id}"]`)) continue;
     const card = el("article", "as-job");
-    card.dataset.job = j.job_id;
     const title = el("a", "as-job-title", j.title);
     title.href = j.url;
-    const salary = j.salary_text || (j.salary_min_vnd
-      ? `${Math.round(j.salary_min_vnd / 1e6)}${j.salary_max_vnd ? "–" + Math.round(j.salary_max_vnd / 1e6) : "+"} triệu`
-      : "Thoả thuận");
+    const lo = j.salary_min_vnd, hi = j.salary_max_vnd;
+    const salary = j.salary_text || (lo && hi ? `${vnd(lo)} – ${vnd(hi)}` : lo ? `Từ ${vnd(lo)}` : hi ? `Đến ${vnd(hi)}` : "Thoả thuận");
     card.append(title, el("div", "as-job-co", j.company_name),
       el("div", "as-job-meta", [salary, j.district, j.job_level].filter(Boolean).join(" · ")));
     if (!guest) {
@@ -137,9 +142,8 @@ const addJobs = (wrap, jobs) => {
 
 const addSources = (wrap, sources) => {
   if (!sources?.length) return;
-  const list = wrap.querySelector(".as-sources") || wrap.appendChild(el("ul", "as-sources"));
+  const list = wrap.querySelector(".as-sources") || wrap.insertBefore(el("ul", "as-sources"), wrap.querySelector(".as-bubble"));
   for (const s of sources) {
-    if ([...list.querySelectorAll("a")].some((a) => a.href === s.url)) continue;
     const a = el("a", null, s.domain);
     a.href = s.url;
     a.title = s.title;
@@ -159,15 +163,32 @@ const resetChat = () => {
   $("#bunny-say")?.classList.remove("on"); // chat mới: thỏ im, chờ câu hỏi mới
 };
 
-const toggleDrawer = (id) => {
-  document.querySelectorAll(".as-drawer").forEach((d) => { d.hidden = d.id !== id || !d.hidden; });
+// Mở 1 ngăn (id) hoặc đóng hết (null). Mở: focus vào ngăn, nhớ nút đã mở; đóng: trả focus về nút đó.
+// Truyền trigger vì Safari không focus nút khi bấm chuột (activeElement lúc đó là body).
+const toggleDrawer = (id, trigger) => {
+  let shown = null;
+  for (const d of document.querySelectorAll(".as-drawer")) {
+    d.hidden = d.id !== id || !d.hidden;
+    if (!d.hidden) shown = d;
+  }
+  for (const b of document.querySelectorAll("[aria-controls^='drawer-']")) {
+    b.setAttribute("aria-expanded", String(b.getAttribute("aria-controls") === shown?.id));
+  }
+  if (shown) {
+    opener = trigger || opener || document.activeElement;
+    shown.focus();
+  } else if (opener) {
+    opener.focus();
+    opener = null;
+  }
 };
 
 const loadHistory = async () => {
-  const r = await fetch("/api/assistant/conversations");
-  if (!r.ok) return;
+  const r = await fetch("/api/assistant/conversations").catch(() => null);
+  if (!r?.ok) return;
   const list = $("#history-list");
   list.replaceChildren();
+  $("#history-status").textContent = "";
   const { items } = await r.json();
   if (!items.length) list.append(el("li", "as-note", "Chưa có hội thoại nào."));
   for (const c of items) {
@@ -178,7 +199,11 @@ const loadHistory = async () => {
     del.type = "button";
     del.setAttribute("aria-label", `Xoá hội thoại: ${c.title}`);
     open.addEventListener("click", async () => {
-      const res = await fetch(`/api/assistant/conversations/${c.id}`);
+      const res = await fetch(`/api/assistant/conversations/${c.id}`).catch(() => null);
+      if (!res) {
+        $("#history-status").textContent = "Em chưa mở được hội thoại, công chúa thử lại giúp em nhé";
+        return;
+      }
       if (!res.ok) return loadHistory();
       const conv = await res.json();
       resetChat();
@@ -191,9 +216,14 @@ const loadHistory = async () => {
       toggleDrawer(null);
     });
     del.addEventListener("click", async () => {
-      await fetch(`/api/assistant/conversations/${c.id}`, { method: "DELETE" });
+      const res = await fetch(`/api/assistant/conversations/${c.id}`, { method: "DELETE" }).catch(() => null);
+      if (!res?.ok && res?.status !== 404) { // 404: đã hết hạn/bị xoá từ trước -> coi như xoá xong
+        $("#history-status").textContent = "Em chưa xoá được hội thoại, công chúa thử lại giúp em nhé";
+        return;
+      }
       if (convId === c.id) resetChat();
-      loadHistory();
+      await loadHistory();
+      $("#drawer-history").focus(); // nút vừa bấm đã bị xoá khỏi danh sách: giữ focus trong ngăn
     });
     li.append(open, del);
     list.append(li);
@@ -201,8 +231,8 @@ const loadHistory = async () => {
 };
 
 const loadProfile = async () => {
-  const r = await fetch("/api/assistant/profile");
-  if (!r.ok) return;
+  const r = await fetch("/api/assistant/profile").catch(() => null);
+  if (!r?.ok) return;
   const p = await r.json();
   $("#about").value = p.about || "";
   // khách không upload được CV (server trả 403) -> nhắc đăng nhập thay vì "Thêm CV"
@@ -214,13 +244,18 @@ const loadProfile = async () => {
 const send = async (text) => {
   text = text.trim();
   if (!text || controller) return;
-  addMessage("user", text);
+  const ask = addMessage("user", text);
   const wrap = addMessage("assistant");
   const bubble = wrap.querySelector(".as-bubble");
   const steps = el("ul", "as-steps");
   wrap.prepend(steps);
-  let raw = "", frame = 0, ended = false;
+  // Lượt không trọn (lỗi/Dừng/rớt mạng) bị server bỏ khỏi lịch sử, kèm cả hội thoại nếu lượt này vừa tạo nó
+  // -> hội thoại mới thì phải quên id để lần gửi sau mở hội thoại mới.
+  const fresh = convId === null;
+  let raw = "", frame = 0, ended = false, think = null, thinkSince = 0; // think: dòng "Em đang suy nghĩ…" ở đáy tin nhắn
   controller = new AbortController();
+  stick = true;
+  thread.setAttribute("aria-busy", "true");
   sendBtn.classList.add("stop");
   sendBtn.lastElementChild.textContent = "Dừng";
   setOrb("thinking");
@@ -246,8 +281,23 @@ const send = async (text) => {
         buf = buf.slice(cut + 2);
         const name = /^event: (.+)$/m.exec(block)?.[1]; // khối không có dòng event: (comment `: ping` giữ kết nối) không khớp nhánh nào -> bỏ qua
         const data = JSON.parse(/^data: ?([^\n]*)/m.exec(block)?.[1] || "{}"); // [^\n]: server gửi thẳng U+2028/2029, "." sẽ dừng ở đó
+        if (think && (name === "token" || name === "tool_start")) {
+          // model thôi suy luận (bắt đầu trả lời / gọi tool): dòng "đang suy nghĩ" chỉ là tạm, nhường chỗ cho bước kế
+          // (giữ lại thì mỗi vòng tool thêm 1 dòng "đã suy nghĩ" -> danh sách bước rối)
+          think.remove();
+          think = null;
+        }
         if (name === "conversation") convId = data.id;
-        else if (name === "tool_start") {
+        else if (name === "thinking") {
+          // GLM suy luận cả phút trước khi gọi tool/trả lời; server báo vài giây 1 lần để UI không đứng im
+          setOrb("thinking");
+          if (!think) { // ở đáy tin nhắn (không nằm trong .as-steps phía trên thẻ job) để luôn thấy khi đang bám đáy
+            think = wrap.appendChild(el("p", "as-thinking"));
+            thinkSince = Date.now();
+          }
+          const s = Math.round((Date.now() - thinkSince) / 1000);
+          think.textContent = s ? `Em đang suy nghĩ… ${s} giây` : "Em đang suy nghĩ…";
+        } else if (name === "tool_start") {
           setOrb("thinking");
           // nhãn tool đã kết thúc bằng "…" ("Em đang tìm việc…") -> bỏ trước khi thêm " nè…"
           bunnySay(data.label ? `${data.label.replace(/…$/, "")} nè…` : "Em đang làm giúp công chúa nè…");
@@ -267,7 +317,11 @@ const send = async (text) => {
           stage?.speak(); // 1 token về -> thỏ gật 1 nhịp như đang nói
           raw += data.text;
           // render markdown tối đa 1 lần mỗi frame cho mượt khi token về nhanh
-          frame ||= requestAnimationFrame(() => { frame = 0; bubble.innerHTML = md(raw); });
+          frame ||= requestAnimationFrame(() => {
+            frame = 0;
+            bubble.innerHTML = md(raw);
+            follow();
+          });
         } else if (name === "error") throw new ApiError(apiText(data.message, ERR_GENERIC));
         else if (name === "done") {
           ended = true;
@@ -275,6 +329,7 @@ const send = async (text) => {
           // trả lời xong: thỏ chào công chúa đúng ritual em đã hứa
           bunnySay("Thưa Công Chúa, em đã làm xong yêu cầu của Công Chúa rồi ạ 🌸");
         }
+        follow();
       }
     }
     // stream đóng mà không có done/error (proxy cắt, server restart, rớt mạng): coi là lỗi để hiện thông báo + "Thử lại"
@@ -284,19 +339,32 @@ const send = async (text) => {
       const p = el("p", "as-error", e instanceof ApiError ? e.message : ERR_GENERIC);
       const retry = el("button", "as-btn ghost", "Thử lại");
       retry.type = "button";
-      retry.addEventListener("click", () => { p.remove(); send(text); });
+      // server đã bỏ câu hỏi hỏng khỏi lịch sử -> gỡ cả cặp tin nhắn này rồi gửi lại, không thành 2 câu hỏi trùng
+      retry.addEventListener("click", () => {
+        if (controller) return; // đang trả lời câu khác: send() sẽ bỏ qua, đừng gỡ tin nhắn
+        ask.remove();
+        wrap.remove();
+        send(text);
+      });
       p.append(" ", retry);
       wrap.append(p);
     }
   } finally {
     cancelAnimationFrame(frame);
+    // wrap đã rời thread = resetChat (chat mới / mở hội thoại khác) đã đặt convId mới, đừng ghi đè
+    if (!ended && fresh && wrap.isConnected) convId = null;
+    // lỗi / Dừng / stream đứt giữa chừng: các bước còn "◌" nháy thì đánh dấu hỏng, bỏ dòng "đang suy nghĩ"
+    for (const li of steps.querySelectorAll(".run")) li.className = "fail";
+    think?.remove();
     bubble.innerHTML = md(raw || (controller?.signal.aborted ? "_(công chúa đã dừng)_" : ""));
     controller = null;
+    thread.removeAttribute("aria-busy");
     sendBtn.classList.remove("stop");
     sendBtn.lastElementChild.textContent = "Gửi";
     setOrb("idle");
     // lỗi / Dừng / stream đứt: tắt bong bóng "đang nghĩ…" của thỏ (lỗi đã hiện ngay trong khung chat)
     if (!ended) $("#bunny-say")?.classList.remove("on");
+    follow();
   }
 };
 
@@ -331,9 +399,12 @@ document.querySelectorAll("[data-action]").forEach((b) => b.addEventListener("cl
     resetChat();
     toggleDrawer(null);
     input.focus();
-  } else toggleDrawer(`drawer-${b.dataset.action}`);
+  } else toggleDrawer(`drawer-${b.dataset.action}`, b);
 }));
-document.querySelectorAll("[data-close]").forEach((b) => b.addEventListener("click", () => { b.closest(".as-drawer").hidden = true; }));
+document.querySelectorAll("[data-close]").forEach((b) => b.addEventListener("click", () => toggleDrawer(null)));
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !e.isComposing && document.querySelector(".as-drawer:not([hidden])")) toggleDrawer(null);
+});
 document.querySelectorAll("[data-upload]").forEach((b) => b.addEventListener("click", () => $("#cv-file").click()));
 $("#cv-file").addEventListener("change", async (e) => {
   const file = e.target.files[0];
@@ -341,9 +412,8 @@ $("#cv-file").addEventListener("change", async (e) => {
   if (!file) return;
   const fd = new FormData();
   fd.append("file", file);
-  // mở ngăn hồ sơ (đặt hidden, không toggle) để thấy tiến trình và cả lỗi, dù bấm từ ô nhập hay từ chính ngăn này
-  $("#drawer-history").hidden = true;
-  $("#drawer-profile").hidden = false;
+  // mở ngăn hồ sơ (đang mở thì giữ nguyên, không toggle) để thấy tiến trình và cả lỗi, dù bấm từ ô nhập hay từ chính ngăn này
+  if ($("#drawer-profile").hidden) toggleDrawer("drawer-profile");
   $("#cv-status").textContent = "Em đang đọc CV…";
   let r, data;
   try {
@@ -364,12 +434,16 @@ $("#cv-file").addEventListener("change", async (e) => {
 $("#profile-save").addEventListener("click", async () => {
   const r = await fetch("/api/assistant/profile", {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ about: $("#about").value }),
-  });
-  $("#cv-status").textContent = r.ok ? "Đã lưu hồ sơ ✓" : apiText((await r.json().catch(() => ({}))).detail, "Lưu lỗi, thử lại giúp em nhé");
+  }).catch(() => null); // rớt mạng: báo lỗi như lỗi server
+  $("#cv-status").textContent = r?.ok ? "Đã lưu hồ sơ ✓" : apiText((await r?.json().catch(() => ({})))?.detail, "Lưu lỗi, thử lại giúp em nhé");
 });
 $("#profile-delete").addEventListener("click", async () => {
   if (!confirm("Xoá toàn bộ hồ sơ và CV?")) return;
-  await fetch("/api/assistant/profile", { method: "DELETE" });
+  const r = await fetch("/api/assistant/profile", { method: "DELETE" }).catch(() => null);
+  if (!r?.ok) {
+    $("#cv-status").textContent = "Em chưa xoá được hồ sơ, công chúa thử lại giúp em nhé";
+    return;
+  }
   loadProfile();
 });
 

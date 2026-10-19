@@ -7,10 +7,12 @@
 <script type="importmap">
 {"imports": {
   "three": "/static/vendor/three/build/three.module.js",
-  "three/addons/": "/static/vendor/three/examples/jsm/"
+  "three/addons/": "/static/vendor/three/examples/jsm/",
+  "/static/assistant/stage.js": "/static/assistant/stage.js?v={{ asset_v('assistant/stage.js') }}"
 }}
 </script>
-<script type="module" src="/static/assistant/chat.js"></script>
+{# stage.js được chat.js import("./stage.js") -> đổi phiên bản qua importmap ở trên (import map ánh xạ được cả URL) #}
+<script type="module" src="/static/assistant/chat.js?v={{ asset_v('assistant/chat.js') }}"></script>
 {% endblock %}
 {% block header %}{% endblock %}
 {% block footer %}{% endblock %}
@@ -21,14 +23,14 @@
     <a class="as-logo" href="/search" aria-label="Về trang tìm việc"><img src="/static/favicon.svg" alt=""></a>
     <div class="as-rail-group">
       <button type="button" class="as-rail-btn is-active" data-action="new" aria-label="Chat mới" title="Chat mới">{{ icon('sparkles') }}</button>
-      <button type="button" class="as-rail-btn" data-action="history" aria-label="Lịch sử hội thoại" title="Lịch sử">{{ icon('message-circle') }}</button>
-      <button type="button" class="as-rail-btn" data-action="profile" aria-label="Hồ sơ của công chúa" title="Hồ sơ">{{ icon('user') }}</button>
+      <button type="button" class="as-rail-btn" data-action="history" aria-controls="drawer-history" aria-expanded="false" aria-label="Lịch sử hội thoại" title="Lịch sử">{{ icon('message-circle') }}</button>
+      <button type="button" class="as-rail-btn" data-action="profile" aria-controls="drawer-profile" aria-expanded="false" aria-label="Hồ sơ của công chúa" title="Hồ sơ">{{ icon('user') }}</button>
       <a class="as-rail-btn" href="/search" aria-label="Tìm việc" title="Tìm việc">{{ icon('search') }}</a>
     </div>
   </nav>
   <div class="as-main">
     <div class="as-top">
-      <button type="button" class="as-chip-profile" data-action="profile">{{ icon('user') }}<span id="profile-chip">Hồ sơ</span></button>
+      <button type="button" class="as-chip-profile" data-action="profile" aria-controls="drawer-profile" aria-expanded="false">{{ icon('user') }}<span id="profile-chip">Hồ sơ</span></button>
     </div>
     <section class="as-hero">
       <h1 class="as-title"><span class="soft">Em giúp</span> công chúa <span class="soft">tìm việc</span><br>Content &amp; Marketing tại TP.HCM</h1>
@@ -68,16 +70,17 @@
 <div id="avatar-slot" class="as-avatar-slot" aria-hidden="true"></div>
 {# Thỏ mascot 3D nói: bong bóng chat cạnh nhân vật — DOM thường nằm trên canvas, không nhận kéo (kéo là xoay nhân vật) #}
 <div id="bunny-say" class="as-bunny-say" role="status" aria-live="polite"></div>
-<aside id="drawer-history" class="as-drawer" hidden aria-label="Lịch sử hội thoại">
+<aside id="drawer-history" class="as-drawer" hidden tabindex="-1" aria-label="Lịch sử hội thoại">
   <header><h2>Hội thoại trong 24 giờ qua</h2><button type="button" data-close aria-label="Đóng">{{ icon('x') }}</button></header>
+  <p id="history-status" class="as-note as-status" role="status"></p>
   <ul id="history-list" class="as-history"></ul>
   <p class="as-note">Hội thoại tự xoá sau 24 giờ không hoạt động.</p>
 </aside>
-<aside id="drawer-profile" class="as-drawer" hidden aria-label="Hồ sơ của công chúa">
+<aside id="drawer-profile" class="as-drawer" hidden tabindex="-1" aria-label="Hồ sơ của công chúa">
   <header><h2>Hồ sơ của công chúa</h2><button type="button" data-close aria-label="Đóng">{{ icon('x') }}</button></header>
   <label for="about">Giới thiệu bản thân</label>
   <textarea id="about" rows="7" maxlength="4000" placeholder="Kinh nghiệm, kỹ năng, mức lương mong muốn, quận muốn làm…"></textarea>
-  <p id="cv-status" class="as-note">{{ 'Đăng nhập để tải CV (PDF/DOCX) cho em tư vấn kỹ hơn nhé.' if user.guest else 'Chưa có CV.' }}</p>
+  <p id="cv-status" class="as-note" role="status">{{ 'Đăng nhập để tải CV (PDF/DOCX) cho em tư vấn kỹ hơn nhé.' if user.guest else 'Chưa có CV.' }}</p>
   <div class="as-drawer-actions">
     {% if not user.guest %}<button type="button" class="as-btn" data-upload>{{ icon('paperclip') }}Tải CV (PDF/DOCX)</button>{% endif %}
     <button type="button" class="as-btn primary" id="profile-save">Lưu hồ sơ</button>
