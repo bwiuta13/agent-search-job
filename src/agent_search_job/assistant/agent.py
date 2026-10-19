@@ -298,11 +298,12 @@ async def run_agent(store: JobStore, owner: str, history: list[dict], message: s
                             params += [f"%,{lv},%" for lv in levels]
                         districts = [v for v in args.get("districts") or [] if v in VALID_DISTRICTS]
                         if districts:
-                            where.append("(" + " OR ".join(["LOWER(district) LIKE ?"] * len(districts)) + ")")
-                            params += [f"%{d.lower()}%" for d in districts]
-                        if args.get("query"):
-                            where.append("LOWER(title) LIKE ?")
-                            params.append(f"%{str(args['query']).lower()[:100]}%")
+                            # tên quận chuẩn có dấu; LOWER() của SQLite chỉ hạ chữ ASCII nên không dùng
+                            where.append("(" + " OR ".join(["district LIKE ?"] * len(districts)) + ")")
+                            params += [f"%{d}%" for d in districts]
+                        if args.get("query"):  # LIKE chỉ bỏ phân biệt hoa/thường với ASCII
+                            where.append("title LIKE ?")
+                            params.append(f"%{str(args['query'])[:100]}%")
                         rows = store.conn.execute(
                             f"SELECT {column} AS k, salary_min_vnd, salary_max_vnd FROM jobs "
                             f"WHERE {' AND '.join(where)}", params).fetchall()
@@ -354,36 +355,47 @@ async def run_agent(store: JobStore, owner: str, history: list[dict], message: s
                                 os.environ.get("ASSISTANT_DAILY_WEB_SEARCHES") or 20):
                             result = {"status": "unavailable", "note": "Đã hết lượt tra internet hôm nay"}
                         else:
-                            for attempt in range(2):  # thử lại 1 lần khi Tavily quá tải
-                                r = await client.post(
-                                    TAVILY_URL, json=params, timeout=10,
-                                    headers={"Authorization": f"Bearer {os.environ['TAVILY_API_KEY']}"})
-                                if r.status_code not in (429, 500, 502, 503, 504) or attempt:
-                                    break
-                                await asyncio.sleep(1)
-                            r.raise_for_status()
-                            hits = []
-                            for h in (r.json().get("results") or [])[:5]:
-                                url = str(h.get("url") or "")
-                                if not url.startswith("https://"):
-                                    continue
-                                text = re.sub(r"<[^>]+>", " ", str(h.get("content") or ""))
-                                text = re.sub(r"!?\[([^\]]*)\]\([^)]*\)", r"\1", text)  # bỏ link markdown, giữ chữ
-                                text = re.sub(r"[\x00-\x1f\u200b-\u200f\u2028-\u202e]", " ", text)
-                                hits.append({"title": str(h.get("title") or "")[:150], "url": url,
-                                             "domain": urlparse(url).netloc,
-                                             "snippet": re.sub(r"\s+", " ", text).strip()[:500]})
-                            result = {"status": "ok", "company": company, "topic": topic, "results": hits}
-                            expires = now + (timedelta(hours=24) if topic == "news" else timedelta(days=7))
-                            with store.conn:
-                                store.conn.execute(
-                                    "INSERT OR REPLACE INTO web_search_cache(key, provider, payload, expires_at) "
-                                    "VALUES (?,?,?,?)",
-                                    (key, "tavily", json.dumps(result, ensure_ascii=False), expires.isoformat()))
-                                store.conn.execute(
-                                    "INSERT INTO assistant_usage(owner, day, web_searches) VALUES (?,?,1) "
-                                    "ON CONFLICT(owner, day) DO UPDATE SET web_searches = web_searches + 1",
-                                    (owner, day))
+                            try:
+                                for attempt in range(2):  # thử lại 1 lần khi Tavily quá tải
+                                    r = await client.post(
+                                        TAVILY_URL, json=params, timeout=10,
+                                        headers={"Authorization": f"Bearer {os.environ['TAVILY_API_KEY']}"})
+                                    if r.status_code not in (429, 500, 502, 503, 504) or attempt:
+                                        break
+                                    await asyncio.sleep(1)
+                                r.raise_for_status()
+                                hits = []
+                                for h in (r.json().get("results") or [])[:5]:
+                                    url = str(h.get("url") or "")
+                                    host = urlparse(url).hostname
+                                    if not url.startswith("https://") or not host:
+                                        continue
+                                    clean = []
+                                    for raw in (h.get("title"), h.get("content")):  # tiêu đề và đoạn trích cùng làm sạch
+                                        text = re.sub(r"<[^>]+>", " ", str(raw or ""))
+                                        text = re.sub(r"!?\[([^\]]*)\]\([^)]*\)", r"\1", text)  # bỏ link markdown, giữ chữ
+                                        text = re.sub(r"[\x00-\x1f\u200b-\u200f\u2028-\u202e]", " ", text)
+                                        clean.append(re.sub(r"\s+", " ", text).strip())
+                                    hits.append({"title": clean[0][:150], "url": url, "domain": host,
+                                                 "snippet": clean[1][:500]})
+                                while hits and len(json.dumps(hits, ensure_ascii=False)) > 3000:  # tổng ≤ 3000 ký tự
+                                    hits.pop()
+                            except (httpx.HTTPError, ValueError, AttributeError, TypeError) as e:
+                                # Tavily lỗi/sai dạng: không cache, không tính lượt
+                                log.warning("assistant company_web_search: tavily failed (%s: %s)", type(e).__name__, e)
+                                result = {"status": "unavailable", "note": "Tra internet đang lỗi, em thử lại sau nhé"}
+                            else:
+                                result = {"status": "ok", "company": company, "topic": topic, "results": hits}
+                                expires = now + (timedelta(hours=24) if topic == "news" else timedelta(days=7))
+                                with store.conn:
+                                    store.conn.execute(
+                                        "INSERT OR REPLACE INTO web_search_cache(key, provider, payload, expires_at) "
+                                        "VALUES (?,?,?,?)",
+                                        (key, "tavily", json.dumps(result, ensure_ascii=False), expires.isoformat()))
+                                    store.conn.execute(
+                                        "INSERT INTO assistant_usage(owner, day, web_searches) VALUES (?,?,1) "
+                                        "ON CONFLICT(owner, day) DO UPDATE SET web_searches = web_searches + 1",
+                                        (owner, day))
                         sources = [{"title": h["title"], "url": h["url"], "domain": h["domain"]}
                                    for h in result.get("results") or []]
                         summary = f"{len(sources)} nguồn" if result.get("status") == "ok" else "chưa tra được"
@@ -396,7 +408,9 @@ async def run_agent(store: JobStore, owner: str, history: list[dict], message: s
                 if len(tool_text) > TOOL_RESULT_MAX_CHARS:  # có dấu hiệu cắt để model biết dữ liệu chưa đủ
                     tool_text = tool_text[:TOOL_RESULT_MAX_CHARS] + " …[đã cắt bớt vì quá dài]"
                 if name == "company_web_search":  # đánh dấu dữ liệu web không đáng tin (system prompt)
-                    tool_text = f"<search_results>{tool_text}</search_results>"
+                    # < > -> \u003c \u003e: JSON giải mã ra đúng chữ cũ nhưng web không đóng được thẻ bọc
+                    tool_text = ("<search_results>" + tool_text.replace("<", "\\u003c").replace(">", "\\u003e")
+                                 + "</search_results>")
                 messages.append({"role": "tool", "tool_call_id": c["id"], "content": tool_text})
                 meta["tools"].append({"name": name, "summary": summary, "ok": ok})
                 for j in jobs:
