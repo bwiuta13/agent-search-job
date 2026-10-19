@@ -250,7 +250,7 @@ Trang chat (link "Trợ lý AI" trên thanh menu): người dùng là "công ch�
 |---|---|
 | `search_jobs`, `get_jobs`, `get_company`, `get_company_feedback` | DB job (dùng lại tool MCP `vn_jobs_*`) |
 | `market_stats` | số việc + lương thấp/trung vị/cao theo nhóm nghề, cấp bậc, quận, công ty |
-| `company_web_search` | Tavily (`TAVILY_API_KEY`), cache 7 ngày (tin tức 24 giờ), có nguồn |
+| `company_web_search` | một lượt GLM riêng bật tool `web_search` tích hợp của GreenNode — dùng chính cấu hình LLM trong `.env` (`OPENAI_API_KEY`, `OPENAI_BASE_URL`, `AI_TEXT_MODEL`), không cần key tra web riêng; tóm tắt + URL nguồn, cache 7 ngày (tin tức 24 giờ) |
 
 - **Deep Think**: cho agent tối đa 10 vòng gọi tool (mặc định 6) và câu trả lời dài hơn.
 - **Hồ sơ / CV**: ô "Giới thiệu bản thân" (mọi người, kể cả khách) + upload CV PDF/DOCX ≤ 5MB — **chỉ người đã đăng nhập** (khách nhận 403 "đăng nhập để tải CV"); chỉ lưu phần chữ, không lưu file gốc. PDF đọc bằng `pypdf` (tối đa 10 trang đầu, dừng khi đủ 20.000 ký tự, stream giải nén > 4MB bị từ chối để giảm rủi ro PDF bomb — PDF dựng sẵn vẫn có thể tốn vài giây CPU, nên không mở upload cho khách); DOCX đọc trực tiếp `word/document.xml` trong file zip có giới hạn kích thước giải nén (không dùng python-docx).
