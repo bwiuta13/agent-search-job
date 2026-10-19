@@ -12,6 +12,10 @@ const el = (tag, cls, text) => {
 const thread = $("#thread"), input = $("#input"), sendBtn = $("#send"), deepBtn = $("#deep");
 const guest = $(".as-shell").dataset.guest === "true";
 let convId = null, controller = null, stage = null;
+// Chỉ hiện thông báo lỗi khi nó là chuỗi do API của mình trả về (detail / SSE error.message); còn lại (mạng, JSON hỏng, detail dạng mảng 422) dùng câu tiếng Việt chung.
+const ERR_GENERIC = "Em gặp lỗi rồi, công chúa thử lại giúp em nha 🥺";
+class ApiError extends Error {}
+const apiText = (v, fallback) => (typeof v === "string" && v ? v : fallback);
 
 marked.setOptions({ gfm: true, breaks: true });
 DOMPurify.addHook("afterSanitizeAttributes", (node) => {
@@ -20,12 +24,15 @@ DOMPurify.addHook("afterSanitizeAttributes", (node) => {
     node.setAttribute("rel", "noopener noreferrer");
   }
 });
-// chỉ cho link http(s) và đường dẫn nội bộ (/jobs/...), chặn javascript:, data:, //host.
-// Chặn img/style/form... để câu trả lời bị tiêm lệnh (JD, review, CV) không thể làm trình duyệt gọi ra ngoài (rò rỉ dữ liệu qua ![](https://...)).
+// Allowlist (không phải denylist): chỉ giữ thẻ chữ/bảng/link, KHÔNG có img/video/audio/svg/style... để câu trả lời bị tiêm lệnh
+// (JD, review, CV) không thể làm trình duyệt tự gọi ra ngoài (rò rỉ dữ liệu qua ![](https://...), <video poster>, <table background>...).
+// Link chỉ http(s) và đường dẫn nội bộ (/jobs/...), chặn javascript:, data:, //host. start/align là số/chữ, không phải URL.
 const md = (text) => DOMPurify.sanitize(marked.parse(text), {
+  ALLOWED_TAGS: ["p", "br", "strong", "em", "b", "i", "del", "code", "pre", "blockquote", "ul", "ol", "li", "a",
+    "h1", "h2", "h3", "h4", "h5", "h6", "hr", "table", "thead", "tbody", "tr", "th", "td"],
+  ALLOWED_ATTR: ["href", "title", "start", "align"],
+  ADD_URI_SAFE_ATTR: ["start", "align"],
   ALLOWED_URI_REGEXP: /^(?:https?:|\/(?!\/))/i,
-  FORBID_TAGS: ["img", "style", "form", "input", "textarea", "button", "iframe"],
-  FORBID_ATTR: ["style"],
 });
 
 const setOrb = (state) => {
@@ -169,19 +176,19 @@ const send = async (text) => {
       method: "POST", headers: { "Content-Type": "application/json" }, signal: controller.signal,
       body: JSON.stringify({ conversation_id: convId, message: text, deep_think: deepBtn.getAttribute("aria-pressed") === "true" }),
     });
-    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || "Em gặp lỗi rồi, công chúa thử lại giúp em nha 🥺");
+    if (!r.ok) throw new ApiError(apiText((await r.json().catch(() => ({}))).detail, ERR_GENERIC));
     const reader = r.body.pipeThrough(new TextDecoderStream()).getReader();
     let buf = "";
     for (;;) {
       const { value, done } = await reader.read();
       if (done) break;
-      buf += value;
+      buf = (buf + value).replace(/\r\n/g, "\n"); // gộp rồi mới đổi CRLF để không sót khi \r và \n nằm ở 2 chunk khác nhau
       let cut;
       while ((cut = buf.indexOf("\n\n")) >= 0) {
         const block = buf.slice(0, cut);
         buf = buf.slice(cut + 2);
         const name = /^event: (.+)$/m.exec(block)?.[1];
-        const data = JSON.parse(/^data: (.*)$/m.exec(block)?.[1] || "{}");
+        const data = JSON.parse(/^data: ?([^\n]*)/m.exec(block)?.[1] || "{}"); // [^\n]: server gửi thẳng U+2028/2029, "." sẽ dừng ở đó
         if (name === "conversation") convId = data.id;
         else if (name === "tool_start") {
           setOrb("thinking");
@@ -201,13 +208,13 @@ const send = async (text) => {
           raw += data.text;
           // render markdown tối đa 1 lần mỗi frame cho mượt khi token về nhanh
           frame ||= requestAnimationFrame(() => { frame = 0; bubble.innerHTML = md(raw); });
-        } else if (name === "error") throw new Error(data.message);
+        } else if (name === "error") throw new ApiError(apiText(data.message, ERR_GENERIC));
         else if (name === "done") loadHistory();
       }
     }
   } catch (e) {
     if (e.name !== "AbortError") {
-      const p = el("p", "as-error", e.message);
+      const p = el("p", "as-error", e instanceof ApiError ? e.message : ERR_GENERIC);
       const retry = el("button", "as-btn ghost", "Thử lại");
       retry.type = "button";
       retry.addEventListener("click", () => { p.remove(); send(text); });
@@ -265,12 +272,20 @@ $("#cv-file").addEventListener("change", async (e) => {
   if (!file) return;
   const fd = new FormData();
   fd.append("file", file);
+  // mở ngăn hồ sơ (đặt hidden, không toggle) để thấy tiến trình và cả lỗi, dù bấm từ ô nhập hay từ chính ngăn này
+  $("#drawer-history").hidden = true;
+  $("#drawer-profile").hidden = false;
   $("#cv-status").textContent = "Em đang đọc CV…";
-  const r = await fetch("/api/assistant/profile/cv", { method: "POST", body: fd });
-  const data = await r.json().catch(() => ({}));
+  let r, data;
+  try {
+    r = await fetch("/api/assistant/profile/cv", { method: "POST", body: fd });
+    data = await r.json().catch(() => ({}));
+  } catch {
+    $("#cv-status").textContent = "Em không tải được CV lúc này, công chúa thử lại giúp em nhé";
+    return;
+  }
   if (!r.ok) {
-    $("#cv-status").textContent = data.detail || "Em không đọc được file này ạ.";
-    toggleDrawer("drawer-profile");
+    $("#cv-status").textContent = apiText(data.detail, "Em không đọc được file này ạ.");
     return;
   }
   await loadProfile();
@@ -280,7 +295,7 @@ $("#profile-save").addEventListener("click", async () => {
   const r = await fetch("/api/assistant/profile", {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ about: $("#about").value }),
   });
-  $("#cv-status").textContent = r.ok ? "Đã lưu hồ sơ ✓" : ((await r.json().catch(() => ({}))).detail || "Lưu lỗi, thử lại giúp em nhé");
+  $("#cv-status").textContent = r.ok ? "Đã lưu hồ sơ ✓" : apiText((await r.json().catch(() => ({}))).detail, "Lưu lỗi, thử lại giúp em nhé");
 });
 $("#profile-delete").addEventListener("click", async () => {
   if (!confirm("Xoá toàn bộ hồ sơ và CV?")) return;
