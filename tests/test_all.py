@@ -482,11 +482,11 @@ class TestWebAPI:
                 source_url=f"https://example.com/job/{i}",
             )))
         r1 = client.get("/search?q=content&source=vietnamworks")
-        assert r1.text.count('class="ticket"') == 25
+        assert r1.text.count('class="job-card"') == 25
         assert "page=2" in r1.text and "q=content" in r1.text
         r2 = client.get("/search?q=content&source=vietnamworks&page=2")
         assert r2.status_code == 200
-        assert r2.text.count('class="ticket"') == 5
+        assert r2.text.count('class="job-card"') == 5
         assert "Content Writer 0<" in r1.text + r2.text
         assert 'value="content"' in r2.text and "page=1" in r2.text
 

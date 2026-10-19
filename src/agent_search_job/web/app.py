@@ -94,6 +94,43 @@ def _jd_blocks(text: Optional[str]) -> list[dict]:
 
 
 templates.env.filters["jd_blocks"] = _jd_blocks
+
+
+def _relative_time(iso: Optional[str]) -> str:
+    """Filter Jinja `relative_time`: ISO -> '23 phút trước / Hôm qua / 3 ngày trước'.
+
+    first_seen_at là UTC (isoformat +00:00); so với now UTC.
+    """
+    if not iso:
+        return ""
+    try:
+        from datetime import datetime, timezone
+        dt = datetime.fromisoformat(iso)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        secs = (datetime.now(timezone.utc) - dt).total_seconds()
+    except ValueError:
+        return iso[:10]
+    if secs < 0:
+        secs = 0
+    if secs < 3600:
+        return "vài phút trước"
+    if secs < 86400:
+        h = secs // 3600
+        return f"{int(h)} giờ trước"
+    d = secs // 86400
+    if d == 1:
+        return "Hôm qua"
+    if d < 30:
+        return f"{int(d)} ngày trước"
+    return f"{int(d // 30)} tháng trước"
+
+
+templates.env.filters["relative_time"] = _relative_time
+templates.env.globals["relative_time"] = _relative_time  # macro gọi như hàm
+from datetime import date as _date  # noqa: E402
+
+templates.env.globals["now_date"] = _date.today().isoformat()
 # ?v=<mtime> cho file static: sửa CSS/icon là trình duyệt tải bản mới, không dính cache cũ
 templates.env.globals["asset_v"] = lambda name: int((STATIC_DIR / name).stat().st_mtime)
 
@@ -247,6 +284,8 @@ async def search_page(
         posted_within_days=60,
     )
     facets = store.get_facets()
+    # tổng không lọc nhóm nghề — chip "Tất cả" ở sidebar (đếm như Xóm Jobs)
+    total_all = sum(r["count"] for r in facets["role_clusters"])
     # query string giữ nguyên filter khi chuyển trang (bỏ tham số rỗng / mặc định)
     page_qs = urlencode({k: v for k, v in {
         "q": q, "role": role, "district": district, "work_mode": work_mode,
@@ -257,6 +296,7 @@ async def search_page(
         "user": user,
         "items": res["items"],
         "total": res["total_estimate"],
+        "total_all": total_all,
         "facets": facets,
         "q": q, "role": role, "district": district,
         "work_mode": work_mode, "job_level": job_level, "company": company,

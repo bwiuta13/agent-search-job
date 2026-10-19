@@ -1,91 +1,167 @@
 {% extends "base.html" %}
 {% from "_macros.html" import icon, ticket %}
-{% block title %}Tìm kiếm — Việc làm Content & Marketing TP.HCM{% endblock %}
+{% block title %}Việc làm Content &amp; Marketing TP.HCM{% endblock %}
 {% block content %}
-<section class="tray">
-  <h1>Tìm việc Content &amp; Marketing tại TP.HCM</h1>
-  <p class="lede">Lọc theo nhóm nghề, khu vực, mức lương — mở trang nguồn để ứng tuyển.</p>
-  <form class="filters" method="get" action="/search">
-    <label class="field q">
-      {{ icon('search') }}
-      <input type="search" name="q" value="{{ q }}" placeholder="Ví dụ: content tiktok, brand marketing, SEO..." aria-label="Từ khóa">
-    </label>
-    <button class="btn go" type="submit">{{ icon('search') }}Tìm việc</button>
-    <select name="role" aria-label="Nhóm nghề">
-      <option value="">Mọi nhóm nghề</option>
-      {% for r in facets.role_clusters %}
-      <option value="{{ r.value }}" {% if r.value == role %}selected{% endif %}>{{ r.value }} ({{ r.count }})</option>
-      {% endfor %}
-    </select>
-    <select name="district" aria-label="Khu vực">
-      <option value="">Mọi khu vực</option>
-      {% for d in facets.districts %}
-      <option value="{{ d.value }}" {% if d.value == district %}selected{% endif %}>{{ d.value }} ({{ d.count }})</option>
-      {% endfor %}
-    </select>
-    <select name="work_mode" aria-label="Hình thức">
-      <option value="">Mọi hình thức</option>
-      {% for w in facets.work_modes %}
-      <option value="{{ w.value }}" {% if w.value == work_mode %}selected{% endif %}>{{ w.value }} ({{ w.count }})</option>
-      {% endfor %}
-    </select>
-    <select name="job_level" aria-label="Cấp bậc">
-      <option value="">Mọi cấp bậc</option>
-      {% for l in facets.job_levels %}
-      <option value="{{ l.value }}" {% if l.value == job_level %}selected{% endif %}>{{ l.value }} ({{ l.count }})</option>
-      {% endfor %}
-    </select>
-    <input type="search" name="company" value="{{ company }}" placeholder="Công ty, vd: FPT, Jamu..." aria-label="Tên công ty" style="max-width:180px">
-    <input type="number" name="salary_min" value="{{ salary_min }}" placeholder="Lương từ (VND)" aria-label="Lương tối thiểu (VND)" min="0" step="1000000">
-    <select name="source" aria-label="Nguồn">
-      <option value="all" {% if source == 'all' %}selected{% endif %}>Mọi nguồn</option>
-      {% for s in facets.sources %}
-      <option value="{{ s.value }}" {% if s.value == source %}selected{% endif %}>{{ s.value }} ({{ s.count }})</option>
-      {% endfor %}
-    </select>
-  </form>
+
+{# Hero kiểu Xóm Jobs: kicker + H1 lớn + mô tả + chip khám phá nhanh #}
+<section class="hero-tray">
+  <p class="kicker">Content · Social · Marketing · TP.HCM</p>
+  <h1>Việc làm Content &amp; Marketing<br>tại TP.HCM</h1>
+  <p class="lede">Cơ hội content marketing, social media, copywriter, marketing executive, brand marketing — cập nhật liên tục từ TopCV, VietnamWorks, LinkedIn, ITviec, CareerViet.</p>
+  <nav class="quick-chips" aria-label="Khám phá nhanh">
+    <span class="qc-label">Khám phá nhanh:</span>
+    {% for r in facets.role_clusters[:5] %}
+    <a class="chip-link" href="/search?role={{ r.value | urlencode }}">{{ r.value }} ({{ r.count }})</a>
+    {% endfor %}
+  </nav>
 </section>
 
-<p class="count">Tìm thấy <strong>{{ total }}</strong> việc làm đang mở tại TP.HCM.{% if pages > 1 %} <span class="page-of">Trang {{ page }}/{{ pages }}</span>{% endif %}</p>
+<div class="layout">
+  {# Sidebar nhóm nghề có đếm số (như Xóm Jobs) #}
+  <nav class="side-chips" aria-label="Nhóm nghề">
+    <a href="/search" {% if not role %}aria-current="page"{% endif %}>
+      <span>Tất cả</span><span class="n">{{ total_all }}</span>
+    </a>
+    {% for r in facets.role_clusters %}
+    <a href="/search?role={{ r.value | urlencode }}" {% if r.value == role %}aria-current="page"{% endif %}>
+      <span>{{ r.value }}</span><span class="n">{{ r.count }}</span>
+    </a>
+    {% endfor %}
+  </nav>
 
-<section class="tray rescan-tray" id="rescan">
-  <div class="scan-panel" id="scan-panel" hidden>
-    <div class="scan-head">
-      <span class="scan-radar" aria-hidden="true"></span>
-      <div class="scan-title">
-        <strong id="scan-title">Đang quét dữ liệu nguồn…</strong>
-        <span id="scan-meta"></span>
-      </div>
-      <button type="button" class="scan-close" id="scan-hide" aria-label="Ẩn log" title="Ẩn log" hidden>{{ icon('x') }}</button>
-    </div>
-    <div class="scan-bar" aria-hidden="true"><i></i></div>
-    <ol class="scan-log" id="scan-log" aria-live="polite" aria-label="Log quét"></ol>
-    <div class="scan-foot" id="scan-foot" hidden>
-      <div class="scan-stats" id="scan-stats"></div>
-      <a class="btn scan-reload" href="/search">{{ icon('refresh') }}Tải lại kết quả</a>
-    </div>
-  </div>
-  <details class="rescan">
-    <summary>{{ icon('refresh') }} Quét lại dữ liệu nguồn</summary>
-    <form class="filters" method="post" action="/rescan">
-      <select name="source" aria-label="Nguồn cần quét">
-        <option value="all">Mọi nguồn</option>
-        <option value="vietnamworks">VietnamWorks</option>
-        <option value="itviec">ITviec</option>
-        <option value="careerviet">CareerViet</option>
-        <option value="topcv">TopCV</option>
-        <option value="linkedin">LinkedIn</option>
-        <option value="topdev">TopDev</option>
-        <option value="vng">VNG Careers</option>
+  <div class="content-col">
+    <form class="filters filters-compact" method="get" action="/search">
+      <input type="hidden" name="role" value="{{ role }}">
+      <label class="field q">
+        {{ icon('search') }}
+        <input type="search" name="q" value="{{ q }}" placeholder="Ví dụ: content tiktok, brand marketing, SEO..." aria-label="Từ khóa">
+      </label>
+      <select name="district" aria-label="Khu vực">
+        <option value="">Mọi khu vực</option>
+        {% for d in facets.districts %}
+        <option value="{{ d.value }}" {% if d.value == district %}selected{% endif %}>{{ d.value }} ({{ d.count }})</option>
+        {% endfor %}
       </select>
-      <input type="search" name="query" value="content marketing" placeholder="Từ khóa quét" aria-label="Từ khóa quét">
-      <input type="number" name="max_results" value="15" min="1" max="50" aria-label="Số kết quả tối đa mỗi nguồn" style="max-width:120px">
-      <button class="btn go" type="submit">{{ icon('refresh') }}Quét ngay</button>
+      <select name="work_mode" aria-label="Hình thức">
+        <option value="">Mọi hình thức</option>
+        {% for w in facets.work_modes %}
+        <option value="{{ w.value }}" {% if w.value == work_mode %}selected{% endif %}>{{ w.value }} ({{ w.count }})</option>
+        {% endfor %}
+      </select>
+      <select name="job_level" aria-label="Cấp bậc">
+        <option value="">Mọi cấp bậc</option>
+        {% for l in facets.job_levels %}
+        <option value="{{ l.value }}" {% if l.value == job_level %}selected{% endif %}>{{ l.value }} ({{ l.count }})</option>
+        {% endfor %}
+      </select>
+      <input type="search" name="company" value="{{ company }}" placeholder="Công ty, vd: FPT..." aria-label="Tên công ty">
+      <input type="number" name="salary_min" value="{{ salary_min }}" placeholder="Lương từ (VND)" aria-label="Lương tối thiểu (VND)" min="0" step="1000000">
+      <select name="source" aria-label="Nguồn">
+        <option value="all" {% if source == 'all' %}selected{% endif %}>Mọi nguồn</option>
+        {% for s in facets.sources %}
+        <option value="{{ s.value }}" {% if s.value == source %}selected{% endif %}>{{ s.value }} ({{ s.count }})</option>
+        {% endfor %}
+      </select>
+      <button class="btn go" type="submit">{{ icon('search') }}Tìm việc</button>
     </form>
-    <p class="hint">Quét chạy nền — có thể mất vài phút (TopCV, LinkedIn chậm hơn). Dữ liệu hiện tại vẫn dùng được trong lúc chờ.</p>
-  </details>
-</section>
+
+    <section class="rescan-tray" id="rescan">
+      <div class="scan-panel" id="scan-panel" hidden>
+        <div class="scan-head">
+          <span class="scan-radar" aria-hidden="true"></span>
+          <div class="scan-title">
+            <strong id="scan-title">Đang quét dữ liệu nguồn…</strong>
+            <span id="scan-meta"></span>
+          </div>
+          <button type="button" class="scan-close" id="scan-hide" aria-label="Ẩn log" title="Ẩn log" hidden>{{ icon('x') }}</button>
+        </div>
+        <div class="scan-bar" aria-hidden="true"><i></i></div>
+        <ol class="scan-log" id="scan-log" aria-live="polite" aria-label="Log quét"></ol>
+        <div class="scan-foot" id="scan-foot" hidden>
+          <div class="scan-stats" id="scan-stats"></div>
+          <a class="btn scan-reload" href="/search">{{ icon('refresh') }}Tải lại kết quả</a>
+        </div>
+      </div>
+      <details class="rescan">
+        <summary>{{ icon('refresh') }} Quét lại dữ liệu nguồn</summary>
+        <form class="filters" method="post" action="/rescan">
+          <select name="source" aria-label="Nguồn cần quét">
+            <option value="all">Mọi nguồn</option>
+            <option value="vietnamworks">VietnamWorks</option>
+            <option value="itviec">ITviec</option>
+            <option value="careerviet">CareerViet</option>
+            <option value="topcv">TopCV</option>
+            <option value="linkedin">LinkedIn</option>
+            <option value="topdev">TopDev</option>
+            <option value="vng">VNG Careers</option>
+          </select>
+          <input type="search" name="query" value="content marketing" placeholder="Từ khóa quét" aria-label="Từ khóa quét">
+          <input type="number" name="max_results" value="15" min="1" max="50" aria-label="Số kết quả tối đa mỗi nguồn" style="max-width:120px">
+          <button class="btn go" type="submit">{{ icon('refresh') }}Quét ngay</button>
+        </form>
+        <p class="hint">Quét chạy nền — có thể mất vài phút (TopCV, LinkedIn chậm hơn). Dữ liệu hiện tại vẫn dùng được trong lúc chờ.</p>
+      </details>
+    </section>
+
+    {# Toolbar kiểu Xóm Jobs: đếm + sắp xếp + Danh sách/Lưới #}
+    <div class="toolbar">
+      <p class="count">Tìm thấy <strong>{{ total }}</strong> việc làm{% if pages > 1 %} <span class="page-of">Trang {{ page }}/{{ pages }}</span>{% endif %}</p>
+      <div class="view-toggle" role="group" aria-label="Dạng xem">
+        <button type="button" id="view-list" aria-pressed="true">{{ icon('list') }}Danh sách</button>
+        <button type="button" id="view-grid" aria-pressed="false">{{ icon('grid') }}Lưới</button>
+      </div>
+    </div>
+
+    {% if items %}
+    <div class="jobs" id="jobs">
+      {% for j in items %}{{ ticket(j) }}{% endfor %}
+    </div>
+    {% if pages > 1 %}
+    {% set base = '/search?' ~ (page_qs ~ '&' if page_qs else '') %}
+    <nav class="pager" aria-label="Phân trang">
+      {% if page > 1 %}<a class="pg step" href="{{ base }}page={{ page - 1 }}" rel="prev" aria-label="Trang trước">{{ icon('chevron-left') }}<span>Trước</span></a>
+      {% else %}<span class="pg step" aria-disabled="true">{{ icon('chevron-left') }}<span>Trước</span></span>{% endif %}
+      <span class="nums">
+        {% set ns = namespace(gap=false) %}
+        {% for n in range(1, pages + 1) %}
+          {% if n == 1 or n == pages or (n - page)|abs <= 1 %}
+            {% set ns.gap = false %}
+            {% if n == page %}<span class="pg" aria-current="page">{{ n }}</span>
+            {% else %}<a class="pg" href="{{ base }}page={{ n }}" aria-label="Trang {{ n }}">{{ n }}</a>{% endif %}
+          {% elif not ns.gap %}{% set ns.gap = true %}<span class="gap" aria-hidden="true">…</span>{% endif %}
+        {% endfor %}
+      </span>
+      {% if page < pages %}<a class="pg step" href="{{ base }}page={{ page + 1 }}" rel="next" aria-label="Trang sau"><span>Sau</span>{{ icon('chevron-right') }}</a>
+      {% else %}<span class="pg step" aria-disabled="true"><span>Sau</span>{{ icon('chevron-right') }}</span>{% endif %}
+    </nav>
+    {% endif %}
+    {% else %}
+    <div class="empty card">
+      {{ icon('search-x') }}
+      <h2>Chưa có việc khớp bộ lọc</h2>
+      <p>Thử bỏ bớt bộ lọc, hoặc dùng từ khóa khác như "content", "social media", "truyền thông".</p>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
 <script>
+(function () {
+  /* Toggle Danh sách/Lưới (như Xóm Jobs) — lưu lựa chọn vào localStorage */
+  var jobs = document.getElementById("jobs");
+  var bl = document.getElementById("view-list"), bg = document.getElementById("view-grid");
+  if (!jobs || !bl || !bg) return;
+  function setView(grid) {
+    jobs.classList.toggle("grid-view", grid);
+    bl.setAttribute("aria-pressed", grid ? "false" : "true");
+    bg.setAttribute("aria-pressed", grid ? "true" : "false");
+    try { localStorage.setItem("jobsView", grid ? "grid" : "list"); } catch (e) {}
+  }
+  bl.addEventListener("click", function () { setView(false); });
+  bg.addEventListener("click", function () { setView(true); });
+  try { if (localStorage.getItem("jobsView") === "grid") setView(true); } catch (e) {}
+})();
+
 (function () {
   var panel = document.getElementById("scan-panel"), list = document.getElementById("scan-log");
   var title = document.getElementById("scan-title"), meta = document.getElementById("scan-meta");
@@ -182,32 +258,4 @@
   poll();
 })();
 </script>
-{% if items %}
-  {% for j in items %}{{ ticket(j) }}{% endfor %}
-  {% if pages > 1 %}
-  {% set base = '/search?' ~ (page_qs ~ '&' if page_qs else '') %}
-  <nav class="pager" aria-label="Phân trang">
-    {% if page > 1 %}<a class="pg step" href="{{ base }}page={{ page - 1 }}" rel="prev" aria-label="Trang trước">{{ icon('chevron-left') }}<span>Trước</span></a>
-    {% else %}<span class="pg step" aria-disabled="true">{{ icon('chevron-left') }}<span>Trước</span></span>{% endif %}
-    <span class="nums">
-      {% set ns = namespace(gap=false) %}
-      {% for n in range(1, pages + 1) %}
-        {% if n == 1 or n == pages or (n - page)|abs <= 1 %}
-          {% set ns.gap = false %}
-          {% if n == page %}<span class="pg" aria-current="page">{{ n }}</span>
-          {% else %}<a class="pg" href="{{ base }}page={{ n }}" aria-label="Trang {{ n }}">{{ n }}</a>{% endif %}
-        {% elif not ns.gap %}{% set ns.gap = true %}<span class="gap" aria-hidden="true">…</span>{% endif %}
-      {% endfor %}
-    </span>
-    {% if page < pages %}<a class="pg step" href="{{ base }}page={{ page + 1 }}" rel="next" aria-label="Trang sau"><span>Sau</span>{{ icon('chevron-right') }}</a>
-    {% else %}<span class="pg step" aria-disabled="true"><span>Sau</span>{{ icon('chevron-right') }}</span>{% endif %}
-  </nav>
-  {% endif %}
-{% else %}
-  <div class="empty card">
-    {{ icon('search-x') }}
-    <h2>Chưa có việc khớp bộ lọc</h2>
-    <p>Thử bỏ bớt bộ lọc, hoặc dùng từ khóa khác như "content", "social media", "truyền thông".</p>
-  </div>
-{% endif %}
 {% endblock %}
