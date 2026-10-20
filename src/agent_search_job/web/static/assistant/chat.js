@@ -21,7 +21,7 @@ let characterLoading = false;
 const loadCharacter = () => {
   if (!stage || characterLoading || !wideForCharacter.matches) return;
   characterLoading = true;
-  stage.setCharacter("/static/assistant/character.glb").catch((e) => {
+  stage.setCharacter($("#stage").dataset.character).catch((e) => {
     characterLoading = false;
     console.warn("Không tải được nhân vật 3D", e);
   });

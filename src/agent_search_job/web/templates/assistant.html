@@ -19,7 +19,8 @@
 {% block footer %}{% endblock %}
 {% block widget %}{% endblock %}
 {% block content %}
-<canvas id="stage" aria-hidden="true"></canvas>
+{# ?v= theo mtime: sửa character.glb thì trình duyệt tải bản mới ngay, không dùng bản cũ trong cache #}
+<canvas id="stage" aria-hidden="true" data-character="/static/assistant/character.glb?v={{ asset_v('assistant/character.glb') }}"></canvas>
 <div class="as-shell" data-guest="{{ 'true' if user.guest else 'false' }}">
   <nav class="as-rail" aria-label="Trợ lý AI">
     <a class="as-logo" href="/search" aria-label="Về trang tìm việc"><img src="/static/favicon.svg" alt=""></a>

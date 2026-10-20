@@ -235,7 +235,7 @@ export function createStage(canvas, { orbSlot, avatarSlot }) {
     }
     mixer?.stopAllAction();
     character = gltf.scene;
-    // Chuẩn hoá: GLB có thể lệch gốc / khác tỉ lệ (character.glb lượng tử hoá về khối 0..1, gốc ở góc) ->
+    // Chuẩn hoá: GLB có thể lệch gốc / khác tỉ lệ (character.glb gốc Meshy cao 1.9, rộng 1.0, tâm ở giữa) ->
     // đưa về cao 1.75 (vừa khung camera, chừa chỗ nhảy 0.22), rộng ≤ 1.4, căn giữa x/z, chân tại y=0 làm pivot.
     const box = new THREE.Box3().setFromObject(character);
     const size = box.getSize(new THREE.Vector3());
@@ -255,8 +255,8 @@ export function createStage(canvas, { orbSlot, avatarSlot }) {
     if (procedural) {
       // Tay cử động được dù GLB là 1 khối liền (không xương/skin): đỉnh nằm ngoài thân trong dải cao của tay được gán
       // trọng số (armW: + tay phải x > 0, - tay trái) rồi vertex shader xoay chúng quanh vai theo uArm. Ngưỡng đo trên
-      // character.glb sau chuẩn hoá ở trên: thân rộng ±0.38, tay chìa ra tới ±0.7 ở cao 0.2–0.5, vai ~(±0.40, 0.46);
-      // thay nhân vật khác dáng thì chỉnh lại các số này.
+      // character.glb sau chuẩn hoá ở trên (cao 1.75, rộng 0.93): thân rộng ±0.25, tay chìa ra tới ±0.46 ở cao 0.25–0.63,
+      // vai ~(±0.26, 0.58); thay nhân vật khác dáng thì chỉnh lại các số này.
       character.updateMatrixWorld(true); // charRoot mới tạo, chưa xoay -> matrixWorld = toạ độ đã chuẩn hoá
       const v = new THREE.Vector3(), { smoothstep } = THREE.MathUtils;
       character.traverse((o) => {
@@ -264,13 +264,13 @@ export function createStage(canvas, { orbSlot, avatarSlot }) {
         const pos = o.geometry.attributes.position, armW = new Float32Array(pos.count);
         for (let i = 0; i < pos.count; i++) {
           v.fromBufferAttribute(pos, i).applyMatrix4(o.matrixWorld);
-          const w = smoothstep(Math.abs(v.x), 0.38, 0.46) * smoothstep(v.y, 0.17, 0.24) * (1 - smoothstep(v.y, 0.5, 0.55));
+          const w = smoothstep(Math.abs(v.x), 0.251, 0.304) * smoothstep(v.y, 0.213, 0.3) * (1 - smoothstep(v.y, 0.625, 0.688));
           armW[i] = v.x > 0 ? w : -w;
         }
         o.geometry.setAttribute("armW", new THREE.BufferAttribute(armW, 1));
         const toLocal = o.matrixWorld.clone().invert(); // shader làm việc trong toạ độ geometry (chỉ khác tỉ lệ đều + dời)
-        const shoulderL = new THREE.Vector3(-0.4, 0.46, 0).applyMatrix4(toLocal);
-        const shoulderR = new THREE.Vector3(0.4, 0.46, 0).applyMatrix4(toLocal);
+        const shoulderL = new THREE.Vector3(-0.264, 0.575, 0).applyMatrix4(toLocal);
+        const shoulderR = new THREE.Vector3(0.264, 0.575, 0).applyMatrix4(toLocal);
         o.material.onBeforeCompile = (sh) => {
           Object.assign(sh.uniforms, { uArm, uShoulderL: { value: shoulderL }, uShoulderR: { value: shoulderR } });
           sh.vertexShader = "attribute float armW;\nuniform vec2 uArm;\nuniform vec3 uShoulderL, uShoulderR;\n" + sh.vertexShader

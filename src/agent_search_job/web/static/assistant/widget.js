@@ -38,7 +38,7 @@ const start3D = () => {
   import("./stage.js")
     .then((m) => {
       stage = m.createStage(canvas, { avatarSlot: canvas });
-      return stage?.setCharacter("/static/assistant/character.glb");
+      return stage?.setCharacter(canvas.dataset.character);
     })
     .catch((e) => {
       console.warn("Không tải được thỏ 3D", e);
