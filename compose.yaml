@@ -12,6 +12,10 @@ services:
       - "127.0.0.1:${PORT:-8765}:8765"
     environment:
       ALLOWLIST_EMAILS: "${ALLOWLIST_EMAILS-friend@example.com}"
+      # Tài khoản đăng nhập cố định: đặt LOGIN_EMAIL + LOGIN_CODE (>= 12 ký tự) trong .env trên server, không ghi vào repo.
+      # Bỏ trống -> email trong ALLOWLIST_EMAILS dùng mã ngẫu nhiên (xem bằng scripts/show_token.py).
+      LOGIN_EMAIL: "${LOGIN_EMAIL-}"
+      LOGIN_CODE: "${LOGIN_CODE-}"
       JOBS_DB: data/jobs.db
       # Nginx/Caddy trên máy chủ gọi vào container qua IP bridge của Docker, không phải 127.0.0.1 -> uvicorn mặc định
       # bỏ qua X-Forwarded-Proto và cookie đăng nhập / cookie khách của Trợ lý AI không có cờ Secure dù chạy https.

@@ -80,6 +80,8 @@ curl http://127.0.0.1:8765/health
 ```
 
 Nếu không tạo `.env`, Compose dùng các giá trị mặc định an toàn trong `compose.yaml`.
+Đăng nhập: đặt `LOGIN_EMAIL` + `LOGIN_CODE` trong `.env` để có tài khoản với mã do bạn chọn (xem *Đăng nhập & bảo mật*),
+hoặc lấy mã ngẫu nhiên của các email trong `ALLOWLIST_EMAILS` bằng `docker compose exec -u app app python scripts/show_token.py data/jobs.db`.
 Thư mục `data/` và `backups/` được mount từ host nên database và backup không mất khi build lại container.
 Nếu VM đã có database do service systemd tạo, đặt `DATA_DIR`, `BACKUP_DIR`, `APP_UID` và `APP_GID`
 trong `.env` như ví dụ để container dùng trực tiếp dữ liệu cũ mà không phải sao chép.
@@ -121,6 +123,7 @@ location / {
 
 - Mỗi email được mời có một **mã truy cập ngẫu nhiên** (`secrets.token_urlsafe(24)`, lưu ở `users.token`), tạo khi email được seed. Lấy bằng `python scripts/show_token.py data/jobs.db` rồi gửi riêng cho từng người.
 - Web: đăng nhập bằng **email + mã truy cập**. Sai email hay sai mã đều trả cùng một lỗi (không dò được email nào đã được mời). Session là token ngẫu nhiên lưu trong bảng `sessions` của SQLite, hết hạn sau 7 ngày, còn nguyên khi restart server; cookie `HttpOnly`, `SameSite=Lax`, `Secure` khi chạy sau HTTPS (Caddy).
+- **Tài khoản cố định** (tiện khi chạy Docker): đặt `LOGIN_EMAIL` và `LOGIN_CODE` (≥ 12 ký tự, không có `$`) trong `.env` rồi `docker compose up -d`. Mỗi lần khởi động, app tạo email đó (nếu chưa có) với đúng mã này, và nó dùng luôn làm MCP bearer token. Đổi `LOGIN_CODE` rồi khởi động lại thì mã cũ hết hiệu lực và mọi phiên đăng nhập của email đó bị đăng xuất. Mã ngắn hơn 12 ký tự bị bỏ qua, có cảnh báo trong `docker compose logs app`. Không ghi mã vào `compose.yaml` hay commit lên repo.
 - MCP / REST: `Authorization: Bearer <mã truy cập>` (cùng mã với web).
 - Nâng cấp từ bản cũ: token cũ là `sha256("invite:"+email)` nên ai biết email cũng tính ra được. Lần đầu mở DB bằng code mới (server, crawl, `show_token.py`...), các token kiểu cũ tự đổi sang token ngẫu nhiên, token cũ hết hiệu lực → chạy lại `show_token.py` và gửi mã mới cho mọi người, cập nhật header MCP client.
 - Thu hồi / đổi mã một người (đăng xuất mọi session của họ):

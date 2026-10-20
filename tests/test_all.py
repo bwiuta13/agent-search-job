@@ -599,6 +599,40 @@ class TestWebAPI:
         assert client.get("/search").status_code == 401
         appmod._store = None
 
+    def test_fixed_login_account_from_env(self, monkeypatch, tmp_path, caplog):
+        """LOGIN_EMAIL + LOGIN_CODE (vd. .env của Docker): đăng nhập bằng mã cố định; đổi mã -> mã cũ + phiên cũ hết hiệu lực."""
+        from fastapi.testclient import TestClient
+        import agent_search_job.web.app as appmod
+        monkeypatch.setenv("JOBS_DB", str(tmp_path / "jobs.db"))
+        monkeypatch.setenv("ALLOWLIST_EMAILS", "a@example.com")
+        monkeypatch.setenv("LOGIN_EMAIL", " Admin@Example.com ")
+        monkeypatch.setenv("LOGIN_CODE", "ma-co-dinh-12345")
+        appmod._store = None
+        client = TestClient(appmod.app)
+        r = client.post("/login", data={"email": "admin@example.com", "code": "ma-co-dinh-12345"}, follow_redirects=False)
+        assert r.status_code == 302 and r.headers["location"] == "/search"
+        assert client.get("/search").status_code == 200
+        tokens = dict(appmod.get_store().conn.execute("SELECT email, token FROM users").fetchall())
+        assert tokens["admin@example.com"] == "ma-co-dinh-12345" and len(tokens["a@example.com"]) == 32  # allowlist vẫn mã ngẫu nhiên
+        # khởi động lại với mã mới: mã cũ hết hiệu lực, phiên đang đăng nhập bị đăng xuất
+        monkeypatch.setenv("LOGIN_CODE", "ma-moi-sau-khi-doi")
+        appmod._store = None
+        assert client.get("/search", follow_redirects=False).status_code == 401
+        r = client.post("/login", data={"email": "admin@example.com", "code": "ma-co-dinh-12345"}, follow_redirects=False)
+        assert r.headers["location"] == "/?error=1"
+        r = client.post("/login", data={"email": "admin@example.com", "code": "ma-moi-sau-khi-doi"}, follow_redirects=False)
+        assert r.headers["location"] == "/search"
+        # mã quá ngắn: bỏ qua + cảnh báo (không in mã), mã đang dùng giữ nguyên
+        monkeypatch.setenv("LOGIN_CODE", "123456")
+        appmod._store = None
+        with caplog.at_level("WARNING"):
+            appmod.get_store()
+        assert "LOGIN_CODE" in caplog.text and "123456" not in caplog.text
+        assert client.get("/search").status_code == 200
+        r = TestClient(appmod.app).post("/login", data={"email": "admin@example.com", "code": "123456"}, follow_redirects=False)
+        assert r.headers["location"] == "/?error=1"
+        appmod._store = None
+
     def test_rescan_topcv_streams_log_and_errors(self, monkeypatch):
         import logging
         import time

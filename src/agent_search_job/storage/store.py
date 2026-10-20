@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import secrets
 import sqlite3
@@ -19,6 +20,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from ..domain.models import Company, CompanyFeedback, NormalizedJob, utcnow
+
+log = logging.getLogger(__name__)
 from ..domain.normalize import dedupe_key
 
 _SCHEMA = """
@@ -243,6 +246,26 @@ class JobStore:
                     "INSERT OR IGNORE INTO users(email, token, created_at) VALUES (?,?,?)",
                     (email, secrets.token_urlsafe(24), utcnow().isoformat()),
                 )
+        # Tài khoản cố định (LOGIN_EMAIL + LOGIN_CODE trong .env, vd. khi chạy Docker): mã truy cập do người vận hành đặt
+        # thay vì ngẫu nhiên. Đổi LOGIN_CODE -> mã cũ hết hiệu lực và mọi phiên đăng nhập của email đó bị đăng xuất.
+        # Mã < 12 ký tự bị bỏ qua (site chạy public trên Internet): email vẫn được mời, mã đang dùng giữ nguyên.
+        email = os.environ.get("LOGIN_EMAIL", "").strip().lower()
+        code = os.environ.get("LOGIN_CODE", "").strip()
+        if not email:
+            return
+        if len(code) < 12:
+            if code:
+                log.warning("LOGIN_CODE ngắn hơn 12 ký tự nên bị bỏ qua; %s vẫn dùng mã cũ / mã ngẫu nhiên", email)
+            code = ""
+        with self.conn:
+            self.conn.execute(
+                "INSERT OR IGNORE INTO users(email, token, created_at) VALUES (?,?,?)",
+                (email, code or secrets.token_urlsafe(24), utcnow().isoformat()),
+            )
+            if code and self.conn.execute(
+                    "UPDATE users SET token=? WHERE email=? AND token!=?", (code, email, code)).rowcount:
+                self.conn.execute(
+                    "DELETE FROM sessions WHERE user_id=(SELECT user_id FROM users WHERE email=?)", (email,))
 
     # ------------------------------------------------------------------
     # Jobs
