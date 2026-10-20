@@ -39,10 +39,25 @@ const setOrb = (state) => {
   $(".as-orb-css").dataset.state = state;
   stage?.setState(state);
 };
+// Thỏ mascot 3D chỉ hiện từ 1320px (ô nhân vật ẩn dưới mức này, kể cả mobile) -> chỉ tải GLB 2.8MB khi màn đủ rộng;
+// màn hẹp mở rộng ra sau đó thì tải lúc đó. Tải lỗi -> bỏ qua (ô nhân vật trống), lần đổi kích thước sau thử lại.
+const wideForCharacter = matchMedia("(min-width: 1320px)");
+let characterLoading = false;
+const loadCharacter = () => {
+  if (!stage || characterLoading || !wideForCharacter.matches) return;
+  characterLoading = true;
+  stage.setCharacter("/static/assistant/character.glb").catch((e) => {
+    characterLoading = false;
+    console.warn("Không tải được nhân vật 3D", e);
+  });
+};
+wideForCharacter.addEventListener("change", loadCharacter);
 import("./stage.js")
-  .then((m) => { stage = m.createStage($("#stage"), { orbSlot: $("#orb-slot"), avatarSlot: $("#avatar-slot") }); })
-  .catch(() => {}) // không có WebGL2 / lỗi import -> giữ orb CSS
-  .finally(() => { stage?.setCharacter("/static/assistant/character.glb"); }); // thỏ mascot 3D của công chúa
+  .then((m) => {
+    stage = m.createStage($("#stage"), { orbSlot: $("#orb-slot"), avatarSlot: $("#avatar-slot") });
+    loadCharacter();
+  })
+  .catch(() => {}); // không có WebGL2 / lỗi import -> giữ orb CSS, không có nhân vật
 
 // Thỏ nói: bong bóng chat cạnh nhân vật 3D — báo "đang nghĩ" và câu báo hoàn thành
 // "Thưa Công Chúa, em đã làm xong yêu cầu của Công Chúa rồi ạ". Bong bóng là DOM thường
@@ -234,7 +249,8 @@ const send = async (text) => {
         if (name === "conversation") convId = data.id;
         else if (name === "tool_start") {
           setOrb("thinking");
-          bunnySay(data.label ? `${data.label} nè…` : "Em đang làm giúp công chúa nè…");
+          // nhãn tool đã kết thúc bằng "…" ("Em đang tìm việc…") -> bỏ trước khi thêm " nè…"
+          bunnySay(data.label ? `${data.label.replace(/…$/, "")} nè…` : "Em đang làm giúp công chúa nè…");
           const li = el("li", "run", data.label);
           li.dataset.call = data.call_id;
           steps.append(li);
@@ -279,10 +295,8 @@ const send = async (text) => {
     sendBtn.classList.remove("stop");
     sendBtn.lastElementChild.textContent = "Gửi";
     setOrb("idle");
-    if (!ended && controller === null) { // lỗi / Dừng / stream đứt: thỏ xin lỗi thay vì im lặng
-      const $say = $("#bunny-say");
-      if ($say?.classList.contains("on")) $say.classList.remove("on");
-    }
+    // lỗi / Dừng / stream đứt: tắt bong bóng "đang nghĩ…" của thỏ (lỗi đã hiện ngay trong khung chat)
+    if (!ended) $("#bunny-say")?.classList.remove("on");
   }
 };
 

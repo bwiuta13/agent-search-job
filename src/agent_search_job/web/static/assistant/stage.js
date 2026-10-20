@@ -118,32 +118,6 @@ export function createStage(canvas, { orbSlot, avatarSlot }) {
   timer.connect(document);
   const views = [[orbSlot, orbScene, orbCam], [avatarSlot, avatarScene, avatarCam]];
 
-  // Chuyển động procedural (GLB không có clip): mọi biên độ nhỏ để giữ dáng mascot của công chúa.
-  // charRoot là group pivot ở chân nhân vật -> nghiêng/ngảy tự nhiên như đứng trên sàn.
-  const hopY = () => {
-    if (hopT < 0) return 0;
-    const k = hopT / 0.55;
-    if (k >= 1) { hopT = -1; return 0; }
-    return Math.sin(k * Math.PI) * 0.22;
-  };
-  const animateCharacter = (t, dt) => {
-    if (!charRoot || !procedural) return;
-    if (hopT >= 0) hopT += dt;
-    spinY = THREE.MathUtils.damp(spinY, spinTarget, 8, dt);
-    const s = charState;
-    const breathe = Math.sin(t * (s === "thinking" ? 1.1 : 1.6)) * 0.012; // thở
-    const sway = Math.sin(t * (s === "thinking" ? 0.7 : 1.0)) * (s === "speaking" ? 0.05 : 0.03); // lắc lư
-    let lean = Math.sin(t * 0.9) * 0.03;
-    let nod = 0;
-    if (s === "thinking") lean = 0.1 + Math.sin(t * 2.2) * 0.04; // nghiêng người suy nghĩ
-    if (s === "speaking") {
-      speakPulse = Math.max(0, speakPulse - dt * 3.2);
-      nod = speakPulse * 0.1 + Math.sin(t * 6.0) * 0.02; // gật theo nhịp token + rung như đang nói
-    }
-    charRoot.position.y = breathe + hopY();
-    charRoot.rotation.set(nod, spinY + Math.sin(t * 0.5) * 0.06, lean + sway * 0.35);
-  };
-
   const frame = () => {
     if (lost) return; // sau khi mất context thì dừng hẳn: không vẽ lại kể cả khi three tự khôi phục context
     timer.update();
@@ -166,7 +140,26 @@ export function createStage(canvas, { orbSlot, avatarSlot }) {
       shellGeo.computeVertexNormals();
     }
     mixer?.update(dt);
-    if (!still) animateCharacter(t, dt);
+    if (!still && charRoot && procedural) {
+      // Chuyển động procedural (GLB không có clip): biên độ nhỏ để giữ dáng mascot của công chúa.
+      // charRoot là group pivot ở chân nhân vật -> nghiêng/nhảy tự nhiên như đứng trên sàn.
+      if (hopT >= 0) hopT += dt;
+      const hop = hopT >= 0 && hopT < 0.55 ? Math.sin((hopT / 0.55) * Math.PI) * 0.22 : 0; // poke(): nhảy 1 nhịp 0.55s
+      if (hopT >= 0.55) hopT = -1;
+      spinY = THREE.MathUtils.damp(spinY, spinTarget, 8, dt);
+      const s = charState;
+      const breathe = Math.sin(t * (s === "thinking" ? 1.1 : 1.6)) * 0.012; // thở
+      const sway = Math.sin(t * (s === "thinking" ? 0.7 : 1.0)) * (s === "speaking" ? 0.05 : 0.03); // lắc lư
+      let lean = Math.sin(t * 0.9) * 0.03;
+      let nod = 0;
+      if (s === "thinking") lean = 0.1 + Math.sin(t * 2.2) * 0.04; // nghiêng người suy nghĩ
+      if (s === "speaking") {
+        speakPulse = Math.max(0, speakPulse - dt * 3.2);
+        nod = speakPulse * 0.1 + Math.sin(t * 6.0) * 0.02; // gật theo nhịp token + rung như đang nói
+      }
+      charRoot.position.y = breathe + hop;
+      charRoot.rotation.set(nod, spinY + Math.sin(t * 0.5) * 0.06, lean + sway * 0.35);
+    }
     const h = canvas.clientHeight;
     renderer.setScissorTest(false);
     renderer.clear();
@@ -222,9 +215,16 @@ export function createStage(canvas, { orbSlot, avatarSlot }) {
     }
     mixer?.stopAllAction();
     character = gltf.scene;
-    // Đặt nhân vật đứng trên "sàn" của ô (chân tại y=0), cao ~1.9 như người: camera nhìn ngang hông
+    // Chuẩn hoá: GLB có thể lệch gốc / khác tỉ lệ (character.glb lượng tử hoá về khối 0..1, gốc ở góc) ->
+    // đưa về cao 1.75 (vừa khung camera, chừa chỗ nhảy 0.22), rộng ≤ 1.4, căn giữa x/z, chân tại y=0 làm pivot.
     const box = new THREE.Box3().setFromObject(character);
-    character.position.y = -box.min.y;
+    const size = box.getSize(new THREE.Vector3());
+    character.scale.multiplyScalar(Math.min(1.75 / size.y, 1.4 / Math.max(size.x, size.z)));
+    box.setFromObject(character);
+    const center = box.getCenter(new THREE.Vector3());
+    character.position.x -= center.x;
+    character.position.y -= box.min.y;
+    character.position.z -= center.z;
     charRoot = new THREE.Group(); // pivot ở chân: nghiêng/ngảy quanh chân chứ không quanh giữa bụng
     charRoot.add(character);
     avatarScene.add(charRoot);

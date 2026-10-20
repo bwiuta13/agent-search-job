@@ -131,25 +131,27 @@
    Nhân vật của công chúa đứng đây: kéo chuột xoay, chạm nhẹ là nhảy — nên nhận pointer
    (canvas #stage vẫn không nhận click; ô này nằm dưới các ngăn kéo z-index 5). */
 .as-avatar-slot {
-  position: fixed; left: 104px; bottom: 20px; width: 240px; height: 300px;
+  /* rộng 220: mép phải 324px = mép trái ô nhập ở 1320px (W/2 - 336) -> không đè ô nhập (ô này nhận pointer) */
+  position: fixed; left: 104px; bottom: 20px; width: 220px; height: 300px;
   pointer-events: auto; z-index: 2; cursor: grab; touch-action: none;
 }
 .as-avatar-slot:active { cursor: grabbing; }
 
-/* bong bóng chat của thỏ: cạnh trên phải nhân vật, dạng bubble đuôi tròn về phía thỏ */
+/* bong bóng chat của thỏ: ngay trên đầu nhân vật, gọn trong lề trái (x 112..320 < 324 = mép trái cột chat
+   ở 1320px) -> không che tin nhắn; đuôi chỉ xuống thỏ */
 .as-bunny-say {
-  position: fixed; left: 352px; bottom: 260px; z-index: 3; max-width: 300px;
-  padding: 10px 14px; border-radius: 16px; border-bottom-left-radius: 4px;
+  position: fixed; left: 112px; bottom: 330px; z-index: 3; max-width: 208px;
+  padding: 10px 14px; border-radius: 16px;
   background: #fff; border: 1px solid var(--glass-line); box-shadow: var(--shadow);
   font: 600 14px/1.45 var(--font-body); color: var(--ink);
-  opacity: 0; transform: translateY(6px) scale(.96); transform-origin: 0 100%;
+  opacity: 0; transform: translateY(6px) scale(.96); transform-origin: 48px 100%;
   transition: opacity .25s, transform .25s; pointer-events: none;
 }
 .as-bunny-say.on { opacity: 1; transform: none; }
-.as-bunny-say::after { /* đuôi bong bóng chỉ về thỏ */
-  content: ""; position: absolute; left: -7px; bottom: 14px; width: 14px; height: 14px;
-  background: #fff; border-left: 1px solid var(--glass-line); border-bottom: 1px solid var(--glass-line);
-  transform: rotate(45deg); border-bottom-left-radius: 4px;
+.as-bunny-say::after { /* đuôi bong bóng chỉ xuống thỏ */
+  content: ""; position: absolute; left: 40px; bottom: -7px; width: 14px; height: 14px;
+  background: #fff; border-right: 1px solid var(--glass-line); border-bottom: 1px solid var(--glass-line);
+  transform: rotate(45deg); border-bottom-right-radius: 4px;
 }
 @media (max-width: 1319px) { .as-avatar-slot, .as-bunny-say { display: none; } }
 
