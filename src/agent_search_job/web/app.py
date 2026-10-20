@@ -340,8 +340,6 @@ async def search_page(
         posted_within_days=60,
     )
     facets = store.get_facets()
-    # tổng không lọc nhóm nghề — chip "Tất cả" ở sidebar (đếm như Xóm Jobs)
-    total_all = sum(r["count"] for r in facets["role_clusters"])
     # query string giữ nguyên filter khi chuyển trang (bỏ tham số rỗng / mặc định)
     page_qs = urlencode({k: v for k, v in {
         "q": q, "role": role, "district": district, "work_mode": work_mode,
@@ -352,7 +350,6 @@ async def search_page(
         "user": user,
         "items": res["items"],
         "total": res["total_estimate"],
-        "total_all": total_all,
         "facets": facets,
         "q": q, "role": role, "district": district,
         "work_mode": work_mode, "job_level": job_level, "company": company,

@@ -17,18 +17,6 @@
 </section>
 
 <div class="layout">
-  {# Sidebar nhóm nghề có đếm số (như Xóm Jobs) #}
-  <nav class="side-chips" aria-label="Nhóm nghề">
-    <a href="/search" {% if not role %}aria-current="page"{% endif %}>
-      <span>Tất cả</span><span class="n">{{ total_all }}</span>
-    </a>
-    {% for r in facets.role_clusters %}
-    <a href="/search?role={{ r.value | urlencode }}" {% if r.value == role %}aria-current="page"{% endif %}>
-      <span>{{ role_label(r.value) }}</span><span class="n">{{ r.count }}</span>
-    </a>
-    {% endfor %}
-  </nav>
-
   <div class="content-col">
     <section class="tray">
       <h2 style="margin:0 0 4px; font-size:17px">Tìm việc Content &amp; Marketing tại TP.HCM</h2>
@@ -71,6 +59,9 @@
         {% endfor %}
       </select>
       <button class="btn go" type="submit">{{ icon('search') }}Tìm việc</button>
+      {% if q or role or district or work_mode or job_level or company or salary_min or source != 'all' %}
+      <a class="btn clear" href="/search">{{ icon('x') }}Xoá bộ lọc</a>
+      {% endif %}
     </form>
     </section>
 

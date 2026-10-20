@@ -490,6 +490,21 @@ class TestWebAPI:
         assert "Content Writer 0<" in r1.text + r2.text
         assert 'value="content"' in r2.text and "page=1" in r2.text
 
+    def test_search_has_no_role_sidebar_and_clear_filter_button(self):
+        """Đã bỏ cột "Tất cả" (nhóm nghề) bên trái; nút "Xoá bộ lọc" chỉ hiện khi đang lọc, bấm về /search sạch."""
+        client = self._client()
+        import agent_search_job.web.app as appmod
+        appmod.get_store().insert_job(normalize_job(make_job()))
+        r = client.get("/search")
+        assert r.status_code == 200 and 'class="side-chips"' not in r.text and "Xoá bộ lọc" not in r.text
+        assert 'name="role"' in r.text  # nhóm nghề vẫn lọc được bằng ô chọn trong form
+        for qs in ("q=content", "district=Qu%E1%BA%ADn+1", "salary_min=10000000", "source=vietnamworks", "company=FPT"):
+            r = client.get(f"/search?{qs}")
+            assert '<a class="btn clear" href="/search">' in r.text and "Xoá bộ lọc" in r.text, qs
+        # form gửi đủ ô rỗng + "Mọi nguồn" = không lọc gì -> không hiện nút
+        r = client.get("/search?q=&role=&district=&work_mode=&job_level=&company=&salary_min=&source=all")
+        assert "Xoá bộ lọc" not in r.text
+
     def test_job_detail_renders_without_waiting_llm(self, monkeypatch):
         import agent_search_job.pipeline.jd_analysis as ja
         import agent_search_job.web.app as appmod
