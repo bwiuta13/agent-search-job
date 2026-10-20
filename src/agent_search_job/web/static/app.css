@@ -221,9 +221,21 @@ a.chip-link[aria-current="page"] { background: var(--rose); border-color: var(--
 .filters .q input { height: 50px; padding-left: 42px; font-size: 15px; }
 .filters .q .i { width: 18px; height: 18px; }
 .filters .go { grid-column: span 2; height: 50px; }
-/* Xoá bộ lọc: nền trắng viền hồng để nổi trên khay hồng, nhẹ hơn nút Tìm việc */
-.filters .clear { grid-column: span 2; height: 50px; background: #fff; color: var(--accent); border: 1px solid var(--line-strong); box-shadow: none; }
-.filters .clear:hover { background: var(--petal); border-color: var(--rose); color: var(--accent); }
+/* Form tìm việc gọn: hàng trên ô từ khoá + Tìm việc; hàng dưới các ô lọc nhỏ dạng viên thuốc, rộng theo nội dung.
+   (form "Quét lại" bên dưới vẫn dùng lưới .filters ở trên) */
+.filters.find { display: flex; flex-wrap: wrap; align-items: center; gap: 0 8px; }
+.filters.find .q { order: 0; flex: 1 1 0; min-width: 0; }
+.filters.find .q input { height: 42px; font-size: 14.5px; }
+.filters.find .go { order: 1; flex: none; height: 42px; padding: 0 20px; font-size: 14px; }
+.filters.find::after { content: ""; order: 2; flex-basis: 100%; } /* ngắt dòng: ô lọc luôn xuống hàng dưới */
+.filters.find > select, .filters.find > input, .filters.find .clear { order: 3; margin-top: 10px; height: 34px; border-radius: 999px; font-size: 13px; }
+/* min-width 0: select mặc định không co nhỏ hơn lựa chọn dài nhất -> trên mobile mỗi ô chiếm trọn 1 hàng */
+.filters.find > select, .filters.find > input { min-width: 0; }
+.filters.find > select { flex: 0 1 auto; width: auto; max-width: 230px; padding: 0 30px 0 13px; background-position: right 10px center; background-size: 12px; }
+.filters.find > input { flex: 0 1 150px; width: 150px; padding: 0 13px; }
+/* Xoá bộ lọc: viên trắng viền hồng ở cuối hàng lọc, nhẹ hơn nút Tìm việc */
+.filters.find .clear { order: 4; flex: none; gap: 5px; padding: 0 13px; background: #fff; color: var(--accent); border: 1px solid var(--line-strong); box-shadow: none; }
+.filters.find .clear:hover { background: var(--petal); border-color: var(--rose); color: var(--accent); }
 .count { color: var(--muted); font-size: 14px; margin: 0 0 14px; }
 .count strong { color: var(--ink); font-family: var(--font-display); font-size: 16px; }
 .count .page-of { margin-left: 6px; padding: 2px 10px; border-radius: 999px; background: var(--petal); color: var(--accent); font-size: 12.5px; font-weight: 600; }
@@ -363,8 +375,9 @@ footer.site { text-align: center; color: var(--muted); font-size: 12.5px; paddin
   .filters { grid-template-columns: repeat(2, 1fr); }
   .filters > select, .filters > input { grid-column: span 1; }
   .filters .q, .filters .go { grid-column: 1 / -1; }
-  .filters .go, .filters .clear { order: 1; }
-  .filters .clear { grid-column: 1 / -1; }
+  .filters .go { order: 1; }
+  .filters.find > select, .filters.find > input { flex: 1 1 calc(50% - 4px); max-width: none; width: auto; }
+  .filters.find .clear { flex: 1 1 100%; }
   .filters select[name="role"] { grid-column: 1 / -1; }
   .quick-chips .chip-link { padding: 5px 10px; font-size: 12px; }
   .quick-chips .qc-label { display: none; }
@@ -384,6 +397,7 @@ footer.site { text-align: center; color: var(--muted); font-size: 12.5px; paddin
   .pg.step { padding: 0 10px; }
   .pg.step span { display: none; } /* màn hẹp: chỉ còn mũi tên */
   .filters input, .filters select { font-size: 16px; } /* tránh iOS tự zoom khi chạm */
+  .filters.find > select, .filters.find > input { height: 38px; }
   .filters select { padding-left: 12px; padding-right: 30px; background-position: right 9px center; }
   .hero { grid-template-columns: 1fr; }
   .hero .body { padding: 20px 18px; }
