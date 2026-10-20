@@ -138,33 +138,32 @@
 .as-send:hover { background: var(--accent-hover); }
 .as-send.stop { background: var(--ink); }
 
-/* ô nhân vật 3D (Three.js vẽ vào vùng này); ẩn khi màn hình hẹp để không đè ô nhập.
-   Nhân vật của công chúa đứng đây: kéo chuột xoay, chạm nhẹ là nhảy — nên nhận pointer
-   (canvas #stage vẫn không nhận click; ô này nằm dưới các ngăn kéo z-index 5). */
+/* Thỏ mascot 3D: nhỏ (120x150 — ô nhỏ thì texture 1024px đủ dày, nhân vật nét, không nhoè), đứng cố định ở
+   góc dưới trái TRONG khung chat (.as-main position: relative). Kéo chuột xoay, chạm nhẹ là nhảy -> ô nhận pointer
+   (canvas #stage vẫn không nhận click; khung chat nằm dưới các ngăn kéo z-index 5).
+   Lề trống 2 bên cột chat 760px = (100vw - 880px) / 2 -> ở 1280px còn 200px: vừa thỏ (14..134) và bong bóng (10..190). */
 .as-avatar-slot {
-  /* rộng 220: mép phải 324px = mép trái ô nhập ở 1320px (W/2 - 336) -> không đè ô nhập (ô này nhận pointer) */
-  position: fixed; left: 104px; bottom: 20px; width: 220px; height: 300px;
+  position: absolute; left: 14px; bottom: 14px; width: 120px; height: 150px;
   pointer-events: auto; z-index: 2; cursor: grab; touch-action: none;
 }
 .as-avatar-slot:active { cursor: grabbing; }
 
-/* bong bóng chat của thỏ: ngay trên đầu nhân vật, gọn trong lề trái (x 112..320 < 324 = mép trái cột chat
-   ở 1320px) -> không che tin nhắn; đuôi chỉ xuống thỏ */
+/* bong bóng chat của thỏ: ngay trên đầu nhân vật, gọn trong lề trái -> không che tin nhắn; đuôi chỉ xuống thỏ */
 .as-bunny-say {
-  position: fixed; left: 112px; bottom: 330px; z-index: 3; max-width: 208px;
-  padding: 10px 14px; border-radius: 16px;
+  position: absolute; left: 10px; bottom: 174px; z-index: 3; max-width: 180px;
+  padding: 9px 13px; border-radius: 16px;
   background: #fff; border: 1px solid var(--glass-line); box-shadow: var(--shadow);
-  font: 600 14px/1.45 var(--font-body); color: var(--ink);
-  opacity: 0; transform: translateY(6px) scale(.96); transform-origin: 48px 100%;
+  font: 600 13px/1.45 var(--font-body); color: var(--ink);
+  opacity: 0; transform: translateY(6px) scale(.96); transform-origin: 56px 100%;
   transition: opacity .25s, transform .25s; pointer-events: none;
 }
 .as-bunny-say.on { opacity: 1; transform: none; }
-.as-bunny-say::after { /* đuôi bong bóng chỉ xuống thỏ */
-  content: ""; position: absolute; left: 40px; bottom: -7px; width: 14px; height: 14px;
+.as-bunny-say::after { /* đuôi bong bóng chỉ xuống thỏ (tâm ô thỏ ở x=74) */
+  content: ""; position: absolute; left: 50px; bottom: -7px; width: 14px; height: 14px;
   background: #fff; border-right: 1px solid var(--glass-line); border-bottom: 1px solid var(--glass-line);
   transform: rotate(45deg); border-bottom-right-radius: 4px;
 }
-@media (max-width: 1319px) { .as-avatar-slot, .as-bunny-say { display: none; } }
+@media (max-width: 1279px) { .as-avatar-slot, .as-bunny-say { display: none; } }
 
 .as-drawer {
   position: fixed; top: 16px; right: 16px; bottom: 16px; z-index: 5; width: min(380px, calc(100vw - 32px));

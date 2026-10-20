@@ -43,9 +43,9 @@ const setOrb = (state) => {
   $(".as-orb-css").dataset.state = state;
   stage?.setState(state);
 };
-// Thỏ mascot 3D chỉ hiện từ 1320px (ô nhân vật ẩn dưới mức này, kể cả mobile) -> chỉ tải GLB 2.8MB khi màn đủ rộng;
+// Thỏ mascot 3D chỉ hiện từ 1280px (ô nhân vật ẩn dưới mức này, kể cả mobile) -> chỉ tải GLB 2.8MB khi màn đủ rộng;
 // màn hẹp mở rộng ra sau đó thì tải lúc đó. Tải lỗi -> bỏ qua (ô nhân vật trống), lần đổi kích thước sau thử lại.
-const wideForCharacter = matchMedia("(min-width: 1320px)");
+const wideForCharacter = matchMedia("(min-width: 1280px)");
 let characterLoading = false;
 const loadCharacter = () => {
   if (!stage || characterLoading || !wideForCharacter.matches) return;
@@ -370,6 +370,7 @@ const send = async (text) => {
           loadHistory();
           // trả lời xong: thỏ chào công chúa đúng ritual em đã hứa
           bunnySay("Thưa Công Chúa, em đã làm xong yêu cầu của Công Chúa rồi ạ 🌸");
+          stage?.wave();
         }
         follow();
       }

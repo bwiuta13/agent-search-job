@@ -6,6 +6,7 @@
 // - thinking: nghiêng người suy nghĩ, lắc chậm
 // - speaking: gật đầu theo nhịp token về (speak()) + rung nhẹ
 // - poke()/rotate(): công chúa chạm / kéo chuột xoay — nhân vật nhảy vui / quay theo tay
+// - tay: idle đung đưa, nghĩ thì giơ 1 tay, nói thì khoát tay theo nhịp, wave() vẫy chào (xuất hiện / trả lời xong)
 // Muốn VRM: vendor @pixiv/three-vrm, thêm vào importmap, đăng ký VRMLoaderPlugin trong GLTFLoader
 // và gọi vrm.update(dt) mỗi frame (biểu cảm aa/ih/ou/ee/oh dùng cho lip-sync).
 import * as THREE from "three";
@@ -110,7 +111,8 @@ export function createStage(canvas, { orbSlot, avatarSlot }) {
   avatarCam.position.set(0, 1.15, 4.1);
   avatarCam.lookAt(0, 0.92, 0);
   let character = null, charRoot = null, mixer = null, lost = false, procedural = false;
-  let charState = "idle", speakPulse = 0, spinY = 0, spinTarget = 0, hopT = -1;
+  let charState = "idle", speakPulse = 0, spinY = 0, spinTarget = 0, hopT = -1, waveT = -1;
+  const uArm = { value: new THREE.Vector2() }; // góc giơ tay (rad, > 0 là giơ lên): x = tay trái, y = tay phải
 
   const cur = { ...STATES.idle };
   let target = STATES.idle, hue = 0;
@@ -159,6 +161,21 @@ export function createStage(canvas, { orbSlot, avatarSlot }) {
       }
       charRoot.position.y = breathe + hop;
       charRoot.rotation.set(nod, spinY + Math.sin(t * 0.5) * 0.06, lean + sway * 0.35);
+      // tay: đung đưa ngược pha; nghĩ -> giơ tay phải lên; nói -> khoát tay theo nhịp token; wave() -> vẫy 1.8s
+      let liftL = 0.05 + Math.sin(t * 1.4) * 0.05, liftR = 0.05 - Math.sin(t * 1.4) * 0.05;
+      if (s === "thinking") liftR = 0.5 + Math.sin(t * 2.2) * 0.06;
+      if (s === "speaking") {
+        liftL = 0.1 + speakPulse * 0.25;
+        liftR = 0.15 + Math.sin(t * 5.0) * 0.1 + speakPulse * 0.15;
+      }
+      if (waveT >= 0) {
+        waveT += dt;
+        const env = Math.max(0, Math.min(1, waveT / 0.25, (1.8 - waveT) / 0.3)); // giơ lên 0.25s, hạ xuống 0.3s cuối
+        // đầu chibi rất to: giơ quá ~0.7 rad là tay lọt vào trong khối đầu, không thấy -> vẫy trong khoảng 0.1..0.7
+        liftR = liftR * (1 - env) + env * (0.4 + Math.sin(waveT * 12) * 0.3);
+        if (waveT >= 1.8) waveT = -1;
+      }
+      uArm.value.set(liftL, liftR);
     }
     const h = canvas.clientHeight;
     renderer.setScissorTest(false);
@@ -232,6 +249,40 @@ export function createStage(canvas, { orbSlot, avatarSlot }) {
     procedural = !idle; // GLB có clip idle -> chơi clip của artist, bỏ procedural
     mixer = idle ? new THREE.AnimationMixer(character) : null;
     mixer?.clipAction(idle).play();
+    if (procedural) {
+      // Tay cử động được dù GLB là 1 khối liền (không xương/skin): đỉnh nằm ngoài thân trong dải cao của tay được gán
+      // trọng số (armW: + tay phải x > 0, - tay trái) rồi vertex shader xoay chúng quanh vai theo uArm. Ngưỡng đo trên
+      // character.glb sau chuẩn hoá ở trên: thân rộng ±0.38, tay chìa ra tới ±0.7 ở cao 0.2–0.5, vai ~(±0.40, 0.46);
+      // thay nhân vật khác dáng thì chỉnh lại các số này.
+      character.updateMatrixWorld(true); // charRoot mới tạo, chưa xoay -> matrixWorld = toạ độ đã chuẩn hoá
+      const v = new THREE.Vector3(), { smoothstep } = THREE.MathUtils;
+      character.traverse((o) => {
+        if (!o.isMesh) return;
+        const pos = o.geometry.attributes.position, armW = new Float32Array(pos.count);
+        for (let i = 0; i < pos.count; i++) {
+          v.fromBufferAttribute(pos, i).applyMatrix4(o.matrixWorld);
+          const w = smoothstep(Math.abs(v.x), 0.38, 0.46) * smoothstep(v.y, 0.17, 0.24) * (1 - smoothstep(v.y, 0.5, 0.55));
+          armW[i] = v.x > 0 ? w : -w;
+        }
+        o.geometry.setAttribute("armW", new THREE.BufferAttribute(armW, 1));
+        const toLocal = o.matrixWorld.clone().invert(); // shader làm việc trong toạ độ geometry (chỉ khác tỉ lệ đều + dời)
+        const shoulderL = new THREE.Vector3(-0.4, 0.46, 0).applyMatrix4(toLocal);
+        const shoulderR = new THREE.Vector3(0.4, 0.46, 0).applyMatrix4(toLocal);
+        o.material.onBeforeCompile = (sh) => {
+          Object.assign(sh.uniforms, { uArm, uShoulderL: { value: shoulderL }, uShoulderR: { value: shoulderR } });
+          sh.vertexShader = "attribute float armW;\nuniform vec2 uArm;\nuniform vec3 uShoulderL, uShoulderR;\n" + sh.vertexShader
+            .replace("#include <beginnormal_vertex>", `#include <beginnormal_vertex>
+              float armA = armW * (armW > 0.0 ? uArm.y : uArm.x); // xoay quanh trục z: tay phải +, tay trái - là giơ lên
+              vec3 armP = armW > 0.0 ? uShoulderR : uShoulderL;
+              float armC = cos(armA), armS = sin(armA);
+              objectNormal = vec3(armC * objectNormal.x - armS * objectNormal.y, armS * objectNormal.x + armC * objectNormal.y, objectNormal.z);`)
+            .replace("#include <begin_vertex>", `#include <begin_vertex>
+              vec3 armD = transformed - armP;
+              transformed = armP + vec3(armC * armD.x - armS * armD.y, armS * armD.x + armC * armD.y, armD.z);`);
+        };
+      });
+      waveT = 0.0001; // vừa xuất hiện: vẫy chào công chúa
+    }
     document.body.classList.add("has-character");
     if (reduced.matches) frame();
   }
@@ -260,6 +311,7 @@ export function createStage(canvas, { orbSlot, avatarSlot }) {
     speak() { speakPulse = 1; }, // 1 token về -> nhân vật gật 1 nhịp
     rotate(dragX) { spinTarget = THREE.MathUtils.clamp(spinTarget + dragX * 0.01, -1.2, 1.2); }, // kéo chuột xoay
     poke() { if (hopT < 0) hopT = 0.0001; }, // chạm -> nhảy 1 nhịp vui
+    wave() { if (waveT < 0) waveT = 0.0001; }, // vẫy tay chào (trả lời xong)
     setCharacter,
     dispose,
   };

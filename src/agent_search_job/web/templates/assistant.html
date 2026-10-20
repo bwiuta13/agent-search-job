@@ -65,11 +65,12 @@
       </form>
       <input type="file" id="cv-file" accept=".pdf,.docx" hidden>
     </div>
+    {# Thỏ mascot 3D nhỏ ở góc dưới trái, nằm TRONG khung chat (đi theo khung, không trôi ra ngoài).
+       Bong bóng nói là DOM thường nằm trên canvas, không nhận kéo (kéo trên ô thỏ là xoay nhân vật) #}
+    <div id="avatar-slot" class="as-avatar-slot" aria-hidden="true"></div>
+    <div id="bunny-say" class="as-bunny-say" role="status" aria-live="polite"></div>
   </div>
 </div>
-<div id="avatar-slot" class="as-avatar-slot" aria-hidden="true"></div>
-{# Thỏ mascot 3D nói: bong bóng chat cạnh nhân vật — DOM thường nằm trên canvas, không nhận kéo (kéo là xoay nhân vật) #}
-<div id="bunny-say" class="as-bunny-say" role="status" aria-live="polite"></div>
 <aside id="drawer-history" class="as-drawer" hidden tabindex="-1" aria-label="Lịch sử hội thoại">
   <header><h2>Hội thoại trong 24 giờ qua</h2><button type="button" data-close aria-label="Đóng">{{ icon('x') }}</button></header>
   <p id="history-status" class="as-note as-status" role="status"></p>
