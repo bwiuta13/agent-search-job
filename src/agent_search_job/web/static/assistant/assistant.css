@@ -127,8 +127,31 @@
 .as-send:hover { background: var(--accent-hover); }
 .as-send.stop { background: var(--ink); }
 
-/* ô nhân vật 3D (Three.js vẽ vào vùng này); ẩn khi màn hình hẹp để không đè ô nhập */
-.as-avatar-slot { position: fixed; left: 104px; bottom: 20px; width: 220px; height: 280px; pointer-events: none; z-index: 2; }
+/* ô nhân vật 3D (Three.js vẽ vào vùng này); ẩn khi màn hình hẹp để không đè ô nhập.
+   Nhân vật của công chúa đứng đây: kéo chuột xoay, chạm nhẹ là nhảy — nên nhận pointer
+   (canvas #stage vẫn không nhận click; ô này nằm dưới các ngăn kéo z-index 5). */
+.as-avatar-slot {
+  position: fixed; left: 104px; bottom: 20px; width: 240px; height: 300px;
+  pointer-events: auto; z-index: 2; cursor: grab; touch-action: none;
+}
+.as-avatar-slot:active { cursor: grabbing; }
+
+/* bong bóng chat của thỏ: cạnh trên phải nhân vật, dạng bubble đuôi tròn về phía thỏ */
+.as-bunny-say {
+  position: fixed; left: 352px; bottom: 260px; z-index: 3; max-width: 300px;
+  padding: 10px 14px; border-radius: 16px; border-bottom-left-radius: 4px;
+  background: #fff; border: 1px solid var(--glass-line); box-shadow: var(--shadow);
+  font: 600 14px/1.45 var(--font-body); color: var(--ink);
+  opacity: 0; transform: translateY(6px) scale(.96); transform-origin: 0 100%;
+  transition: opacity .25s, transform .25s; pointer-events: none;
+}
+.as-bunny-say.on { opacity: 1; transform: none; }
+.as-bunny-say::after { /* đuôi bong bóng chỉ về thỏ */
+  content: ""; position: absolute; left: -7px; bottom: 14px; width: 14px; height: 14px;
+  background: #fff; border-left: 1px solid var(--glass-line); border-bottom: 1px solid var(--glass-line);
+  transform: rotate(45deg); border-bottom-left-radius: 4px;
+}
+@media (max-width: 1319px) { .as-avatar-slot, .as-bunny-say { display: none; } }
 
 .as-drawer {
   position: fixed; top: 16px; right: 16px; bottom: 16px; z-index: 5; width: min(380px, calc(100vw - 32px));
@@ -152,7 +175,6 @@
 .as-history-open { flex: 1; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line); background: #fff; text-align: left; font: 500 14px var(--font-body); color: var(--ink); cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .as-history-del { padding: 0 8px; border: 0; background: none; color: var(--muted); cursor: pointer; }
 
-@media (max-width: 1319px) { .as-avatar-slot { display: none; } }
 @media (max-width: 767px) {
   .assistant-page { --orb: 200px; }
   .assistant-page.has-chat { --orb: 56px; }

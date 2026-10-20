@@ -1,6 +1,11 @@
 // Three.js stage cho /assistant — 1 canvas toàn màn hình, 1 renderer, vẽ từng scene vào vùng
 // của #orb-slot và #avatar-slot bằng scissor (threejs.org/manual "Multiple Canvases, Multiple Scenes").
-// Nhân vật 3D sau này: stage.setCharacter("/static/assistant/character.glb") (GLB có clip "idle").
+// Nhân vật 3D (character.glb — thỏ mascot công chúa dựng, không kèm clip animation): nạp qua
+// setCharacter(), chuyển động procedural theo trạng thái (GLB có clip "idle" thì ưu tiên clip đó):
+// - idle: thở nhẹ + đung đưa + xoay chậm
+// - thinking: nghiêng người suy nghĩ, lắc chậm
+// - speaking: gật đầu theo nhịp token về (speak()) + rung nhẹ
+// - poke()/rotate(): công chúa chạm / kéo chuột xoay — nhân vật nhảy vui / quay theo tay
 // Muốn VRM: vendor @pixiv/three-vrm, thêm vào importmap, đăng ký VRMLoaderPlugin trong GLTFLoader
 // và gọi vrm.update(dt) mỗi frame (biểu cảm aa/ih/ou/ee/oh dùng cho lip-sync).
 import * as THREE from "three";
@@ -92,20 +97,52 @@ export function createStage(canvas, { orbSlot, avatarSlot }) {
 
   // --- Ô nhân vật: scene có camera + đèn, hiện trống tới khi setCharacter() ---
   const avatarScene = new THREE.Scene();
-  avatarScene.add(new THREE.HemisphereLight(0xffffff, 0xf7b7cb, 1.6));
-  const sun = new THREE.DirectionalLight(0xffffff, 1.8);
-  sun.position.set(1, 2, 3);
+  avatarScene.environment = env; // PBR của mascot cần env cho highlight mềm
+  avatarScene.environmentIntensity = 0.9;
+  avatarScene.add(new THREE.HemisphereLight(0xffffff, 0xf7b7cb, 1.5));
+  const sun = new THREE.DirectionalLight(0xffffff, 1.6);
+  sun.position.set(1.2, 2.4, 2.6);
   avatarScene.add(sun);
+  const rimLight = new THREE.DirectionalLight(0xf9b9d9, 1.1); // đèn viền hồng từ sau để mascot nổi trên nền pastel
+  rimLight.position.set(-1.6, 1.4, -2.2);
+  avatarScene.add(rimLight);
   const avatarCam = new THREE.PerspectiveCamera(30, 1, 0.1, 50);
-  avatarCam.position.set(0, 1.3, 3.2);
-  avatarCam.lookAt(0, 1, 0);
-  let character = null, mixer = null, lost = false;
+  avatarCam.position.set(0, 1.15, 4.1);
+  avatarCam.lookAt(0, 0.92, 0);
+  let character = null, charRoot = null, mixer = null, lost = false, procedural = false;
+  let charState = "idle", speakPulse = 0, spinY = 0, spinTarget = 0, hopT = -1;
 
   const cur = { ...STATES.idle };
   let target = STATES.idle, hue = 0;
   const timer = new THREE.Timer();
   timer.connect(document);
   const views = [[orbSlot, orbScene, orbCam], [avatarSlot, avatarScene, avatarCam]];
+
+  // Chuyển động procedural (GLB không có clip): mọi biên độ nhỏ để giữ dáng mascot của công chúa.
+  // charRoot là group pivot ở chân nhân vật -> nghiêng/ngảy tự nhiên như đứng trên sàn.
+  const hopY = () => {
+    if (hopT < 0) return 0;
+    const k = hopT / 0.55;
+    if (k >= 1) { hopT = -1; return 0; }
+    return Math.sin(k * Math.PI) * 0.22;
+  };
+  const animateCharacter = (t, dt) => {
+    if (!charRoot || !procedural) return;
+    if (hopT >= 0) hopT += dt;
+    spinY = THREE.MathUtils.damp(spinY, spinTarget, 8, dt);
+    const s = charState;
+    const breathe = Math.sin(t * (s === "thinking" ? 1.1 : 1.6)) * 0.012; // thở
+    const sway = Math.sin(t * (s === "thinking" ? 0.7 : 1.0)) * (s === "speaking" ? 0.05 : 0.03); // lắc lư
+    let lean = Math.sin(t * 0.9) * 0.03;
+    let nod = 0;
+    if (s === "thinking") lean = 0.1 + Math.sin(t * 2.2) * 0.04; // nghiêng người suy nghĩ
+    if (s === "speaking") {
+      speakPulse = Math.max(0, speakPulse - dt * 3.2);
+      nod = speakPulse * 0.1 + Math.sin(t * 6.0) * 0.02; // gật theo nhịp token + rung như đang nói
+    }
+    charRoot.position.y = breathe + hopY();
+    charRoot.rotation.set(nod, spinY + Math.sin(t * 0.5) * 0.06, lean + sway * 0.35);
+  };
 
   const frame = () => {
     if (lost) return; // sau khi mất context thì dừng hẳn: không vẽ lại kể cả khi three tự khôi phục context
@@ -129,6 +166,7 @@ export function createStage(canvas, { orbSlot, avatarSlot }) {
       shellGeo.computeVertexNormals();
     }
     mixer?.update(dt);
+    if (!still) animateCharacter(t, dt);
     const h = canvas.clientHeight;
     renderer.setScissorTest(false);
     renderer.clear();
@@ -163,18 +201,35 @@ export function createStage(canvas, { orbSlot, avatarSlot }) {
     renderer.setAnimationLoop(null);
     ro.disconnect();
     ac.abort(); // gỡ visibilitychange + reduced.change (+ chính listener này)
-    document.body.classList.remove("webgl-on"); // hiện lại orb CSS
+    document.body.classList.remove("webgl-on", "has-character"); // hiện lại orb CSS
     canvas.hidden = true; // canvas mất context bị Chrome vẽ thành ô trắng đục phủ cả trang ở lần repaint kế tiếp
   }, { signal: ac.signal });
 
   async function setCharacter(url) {
     const { GLTFLoader } = await import("three/addons/loaders/GLTFLoader.js");
     const gltf = await new GLTFLoader().loadAsync(url);
-    if (character) avatarScene.remove(character);
+    if (character) { // nạp lại nhân vật khác: dọn cái cũ
+      avatarScene.remove(charRoot);
+      const dead = [];
+      character.traverse((o) => {
+        o.geometry?.dispose();
+        for (const m of Array.isArray(o.material) ? o.material : o.material ? [o.material] : []) {
+          for (const t of [m.map, m.normalMap, m.metalnessMap, m.roughnessMap, m.aoMap, m.emissiveMap]) t?.dispose?.();
+          dead.push(m);
+        }
+      });
+      for (const m of dead) m.dispose();
+    }
     mixer?.stopAllAction();
     character = gltf.scene;
-    avatarScene.add(character);
+    // Đặt nhân vật đứng trên "sàn" của ô (chân tại y=0), cao ~1.9 như người: camera nhìn ngang hông
+    const box = new THREE.Box3().setFromObject(character);
+    character.position.y = -box.min.y;
+    charRoot = new THREE.Group(); // pivot ở chân: nghiêng/ngảy quanh chân chứ không quanh giữa bụng
+    charRoot.add(character);
+    avatarScene.add(charRoot);
     const idle = gltf.animations.find((a) => /idle/i.test(a.name)) || gltf.animations[0];
+    procedural = !idle; // GLB có clip idle -> chơi clip của artist, bỏ procedural
     mixer = idle ? new THREE.AnimationMixer(character) : null;
     mixer?.clipAction(idle).play();
     document.body.classList.add("has-character");
@@ -198,8 +253,13 @@ export function createStage(canvas, { orbSlot, avatarSlot }) {
   return {
     setState(state) {
       target = STATES[state] || STATES.idle;
+      charState = state in STATES ? state : "idle";
+      if (state === "speaking") speakPulse = 1;
       if (reduced.matches) frame();
     },
+    speak() { speakPulse = 1; }, // 1 token về -> nhân vật gật 1 nhịp
+    rotate(dragX) { spinTarget = THREE.MathUtils.clamp(spinTarget + dragX * 0.01, -1.2, 1.2); }, // kéo chuột xoay
+    poke() { if (hopT < 0) hopT = 0.0001; }, // chạm -> nhảy 1 nhịp vui
     setCharacter,
     dispose,
   };

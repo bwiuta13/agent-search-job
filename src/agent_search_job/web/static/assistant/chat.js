@@ -41,7 +41,42 @@ const setOrb = (state) => {
 };
 import("./stage.js")
   .then((m) => { stage = m.createStage($("#stage"), { orbSlot: $("#orb-slot"), avatarSlot: $("#avatar-slot") }); })
-  .catch(() => {}); // không có WebGL2 / lỗi import -> giữ orb CSS
+  .catch(() => {}) // không có WebGL2 / lỗi import -> giữ orb CSS
+  .finally(() => { stage?.setCharacter("/static/assistant/character.glb"); }); // thỏ mascot 3D của công chúa
+
+// Thỏ nói: bong bóng chat cạnh nhân vật 3D — báo "đang nghĩ" và câu báo hoàn thành
+// "Thưa Công Chúa, em đã làm xong yêu cầu của Công Chúa rồi ạ". Bong bóng là DOM thường
+// (không vẽ trong canvas) để chọn chữ/chuột được và không tốn thêm render 3D.
+const bubbleTimer = { id: 0 };
+const bunnySay = (text, { sticky = false } = {}) => {
+  const say = $("#bunny-say");
+  if (!say) return;
+  clearTimeout(bubbleTimer.id);
+  say.textContent = text;
+  say.classList.add("on");
+  if (!sticky) bubbleTimer.id = setTimeout(() => say.classList.remove("on"), 6000);
+};
+
+// Công chúa kéo chuột trên ô nhân vật -> xoay nhân vật (pointer-events từ CSS bật trên .as-avatar-slot)
+(() => {
+  const slot = $("#avatar-slot");
+  if (!slot) return;
+  let down = false, lastX = 0, moved = 0;
+  slot.addEventListener("pointerdown", (e) => {
+    down = true; moved = 0; lastX = e.clientX;
+    slot.setPointerCapture(e.pointerId);
+  });
+  slot.addEventListener("pointermove", (e) => {
+    if (!down) return;
+    const dx = e.clientX - lastX;
+    lastX = e.clientX; moved += Math.abs(dx);
+    stage?.rotate(dx);
+  });
+  slot.addEventListener("pointerup", () => {
+    down = false;
+    if (moved < 4) stage?.poke(); // chạm nhẹ (không kéo) -> thỏ nhảy 1 nhịp
+  });
+})();
 
 const addMessage = (role, text = "") => {
   document.body.classList.add("has-chat");
@@ -106,6 +141,7 @@ const resetChat = () => {
   convId = null;
   thread.replaceChildren();
   document.body.classList.remove("has-chat");
+  $("#bunny-say")?.classList.remove("on"); // chat mới: thỏ im, chờ câu hỏi mới
 };
 
 const toggleDrawer = (id) => {
@@ -168,11 +204,12 @@ const send = async (text) => {
   const bubble = wrap.querySelector(".as-bubble");
   const steps = el("ul", "as-steps");
   wrap.prepend(steps);
-  let raw = "", frame = 0;
+  let raw = "", frame = 0, ended = false;
   controller = new AbortController();
   sendBtn.classList.add("stop");
   sendBtn.lastElementChild.textContent = "Dừng";
   setOrb("thinking");
+  bunnySay("Em đang suy nghĩ giúp công chúa nè…");
   try {
     const r = await fetch("/api/assistant/chat", {
       method: "POST", headers: { "Content-Type": "application/json" }, signal: controller.signal,
@@ -183,7 +220,7 @@ const send = async (text) => {
       throw new ApiError(apiText((await r.json().catch(() => ({}))).detail, ERR_GENERIC));
     }
     const reader = r.body.pipeThrough(new TextDecoderStream()).getReader();
-    let buf = "", ended = false;
+    let buf = "";
     for (;;) {
       const { value, done } = await reader.read();
       if (done) break;
@@ -197,6 +234,7 @@ const send = async (text) => {
         if (name === "conversation") convId = data.id;
         else if (name === "tool_start") {
           setOrb("thinking");
+          bunnySay(data.label ? `${data.label} nè…` : "Em đang làm giúp công chúa nè…");
           const li = el("li", "run", data.label);
           li.dataset.call = data.call_id;
           steps.append(li);
@@ -210,6 +248,7 @@ const send = async (text) => {
           addSources(wrap, data.sources);
         } else if (name === "token") {
           setOrb("speaking");
+          stage?.speak(); // 1 token về -> thỏ gật 1 nhịp như đang nói
           raw += data.text;
           // render markdown tối đa 1 lần mỗi frame cho mượt khi token về nhanh
           frame ||= requestAnimationFrame(() => { frame = 0; bubble.innerHTML = md(raw); });
@@ -217,6 +256,8 @@ const send = async (text) => {
         else if (name === "done") {
           ended = true;
           loadHistory();
+          // trả lời xong: thỏ chào công chúa đúng ritual em đã hứa
+          bunnySay("Thưa Công Chúa, em đã làm xong yêu cầu của Công Chúa rồi ạ 🌸");
         }
       }
     }
@@ -238,6 +279,10 @@ const send = async (text) => {
     sendBtn.classList.remove("stop");
     sendBtn.lastElementChild.textContent = "Gửi";
     setOrb("idle");
+    if (!ended && controller === null) { // lỗi / Dừng / stream đứt: thỏ xin lỗi thay vì im lặng
+      const $say = $("#bunny-say");
+      if ($say?.classList.contains("on")) $say.classList.remove("on");
+    }
   }
 };
 
@@ -316,3 +361,5 @@ $("#profile-delete").addEventListener("click", async () => {
 
 loadHistory();
 loadProfile();
+// Thỏ chào công chúa khi mở trang (1 lần, tự tắt) — người dùng biết ngay nhân vật đang ở đây
+bunnySay("Em chào công chúa ạ 🌸 Hôm nay công chúa cần em tìm việc gì nè?");
