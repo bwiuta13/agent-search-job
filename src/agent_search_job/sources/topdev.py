@@ -155,8 +155,11 @@ async def fetch_topdev_detail(url: str, timeout: float = 20.0):
     desc_parts: list[str] = []
     requirements = ""
     benefits: list[str] = []
+    # Tiêu đề bắt đầu ngay sau ">" và dài tối đa 200 ký tự: bản cũ ([^<>]+ không neo) thử khớp ở MỌI vị trí của các
+    # đoạn dài không có <> (JSON nhúng ~130KB trên trang thật) rồi lùi từng ký tự -> O(n²), ~80 giây/trang, chạy
+    # trên event loop nên cả website treo trong lúc quét.
     for m in re.finditer(
-        r'([^<>]+)</span><div class="[^"]*\bmt-2"><div class="prose-ul[^"]*">(.*?)'
+        r'>([^<>]{1,200})</span><div class="[^"]*\bmt-2"><div class="prose-ul[^"]*">(.*?)'
         r'</div></div>(?=<span|</div>)', h, re.S,
     ):
         heading = html_lib.unescape(m.group(1)).strip()

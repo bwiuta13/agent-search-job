@@ -1176,6 +1176,32 @@ class TestTopCVDetail:
 
 
 class TestTopDevDetail:
+    async def test_detail_parse_is_linear_on_long_text_without_tags(self, monkeypatch):
+        """Trang TopDev thật có đoạn JSON ~130KB không có <>: regex cũ O(n²) treo cả website khi quét (20/10/2026)."""
+        import time
+        import agent_search_job.sources.topdev as topdev
+        page = ('<html><script id="__NEXT_DATA__">' + "x" * 60_000 + "</script><div>"
+                '<span class="font-bold">Vai trò &amp; trách nhiệm</span><div class="text-sm mt-2"><div class="prose-ul">'
+                + "<ul><li>Lên kế hoạch content cho fanpage và TikTok của thương hiệu</li>" * 3 + "</ul></div></div>"
+                '<span class="font-bold">Kỹ năng</span><div class="text-sm mt-2"><div class="prose-ul">'
+                "<p>2 năm kinh nghiệm content marketing, viết tốt</p></div></div>"
+                '<span class="font-bold">Quyền lợi</span><div class="text-sm mt-2"><div class="prose-ul">'
+                "<p>Lương tháng 13</p><p>Bảo hiểm sức khoẻ</p></div></div></div></html>")
+
+        class FakeClient:
+            def __init__(self, **kw): pass
+            async def __aenter__(self): return self
+            async def __aexit__(self, *a): return False
+            async def get(self, url):
+                return type("R", (), {"status_code": 200, "text": page})()
+        monkeypatch.setattr(topdev.httpx, "AsyncClient", FakeClient)
+        t = time.perf_counter()
+        d = await topdev.fetch_topdev_detail("https://topdev.vn/viec-lam/x-123")
+        assert time.perf_counter() - t < 1  # regex cũ: ~17 giây với 60KB
+        assert "Lên kế hoạch content" in d["description"]
+        assert "2 năm kinh nghiệm" in d["requirements"]
+        assert any("Lương tháng 13" in b for b in d["benefits"])
+
     async def test_jd_from_prose_blocks_keeps_lines(self, monkeypatch):
         """JSON "description" của TopDev đã mất <li> -> lấy khối prose-ul render sẵn."""
         import agent_search_job.sources.topdev as td
