@@ -19,18 +19,23 @@ from ..storage.store import JobStore
 
 log = logging.getLogger("pipeline")
 
-# Query seeds - role list người dùng cần tìm (content/social/marketing/comms/
-# copywriter/creative). KHÔNG còn "video editor"/"graphic design" thuần.
+# Query seeds - đúng role list người dùng cần tìm, dùng cho cả crawl CLI lẫn nút "Quét ngay" trên web
+# (+ "content" rộng và "truyền thông" cho nguồn tiếng Việt). KHÔNG còn "video editor"/"graphic design" thuần.
 DEFAULT_QUERIES = [
-    "content",
-    "content creator",
     "social media",
-    "copywriter",
+    "content creator",
     "content marketing",
+    "communication",
+    "content executive",
+    "social media marketing",
     "marketing executive",
+    "social content",
     "brand marketing",
-    "truyền thông",
+    "content writer",
+    "copywriter",
     "creative",
+    "content",
+    "truyền thông",
 ]
 
 # Job ngoài phạm vi role list -> bỏ, không lưu (kể cả khi nguồn trả về):

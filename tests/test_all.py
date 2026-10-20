@@ -659,6 +659,7 @@ class TestWebAPI:
 
         async def fake_run(self, queries=None, max_results_per_query=50):
             seen["adapters"] = [a.name for a in self.adapters]
+            seen["queries"] = queries
             logging.getLogger("pipeline").info("topcv · 'marketing': 3 job")
             logging.getLogger("pipeline").warning("topcv · 'content' lỗi — TimeoutError: chậm")
             return ingest.CrawlRunResult(inserted=2, updated=1, errors=["topcv: TimeoutError"])
@@ -673,6 +674,9 @@ class TestWebAPI:
                 break
             time.sleep(0.02)
         assert seen["adapters"] == ["topcv"]
+        # từ khoá gõ trên form quét trước, rồi đủ role list mặc định (không trùng)
+        from agent_search_job.pipeline.ingest import DEFAULT_QUERIES
+        assert seen["queries"] == ["marketing", *DEFAULT_QUERIES]
         assert st["running"] is False and st["ok"] is False and st["finished_at"]
         assert st["message"] == "Hoàn tất: +2 việc mới, 1 cập nhật, 1 lỗi"
         assert st["summary"] == {"discovered": 0, "inserted": 2, "updated": 1,
@@ -1298,7 +1302,17 @@ class TestMultimediaScope:
         assert not in_role_scope("Nhân viên dựng phim", "montage")
 
     def test_default_queries_match_role_list(self):
-        from agent_search_job.pipeline.ingest import DEFAULT_QUERIES
+        from agent_search_job.pipeline.ingest import DEFAULT_QUERIES, in_role_scope
+        from agent_search_job.domain.normalize import classify_role
+        # role list người dùng: quét đủ từng từ khoá, và job mang đúng tiêu đề đó phải vào scope + có nhóm nghề
+        role_list = ["social media", "content creator", "content marketing", "communication", "content executive",
+                     "social media marketing", "marketing executive", "social content", "brand marketing",
+                     "content writer", "copywriter", "creative"]
+        for kw in role_list:
+            assert kw in DEFAULT_QUERIES, kw
+            for title in (kw.title(), f"{kw.title()} Executive", f"Chuyên viên {kw.title()}"):
+                assert in_role_scope(title), title
+                assert classify_role(title)[1] >= 0.8, title
         assert "content" in DEFAULT_QUERIES
         assert "content marketing" in DEFAULT_QUERIES
         assert "marketing executive" in DEFAULT_QUERIES

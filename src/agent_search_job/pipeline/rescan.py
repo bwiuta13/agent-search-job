@@ -90,7 +90,7 @@ class RescanManager:
 async def _run_rescan(store: JobStore, source: str, query: str,
                       max_results: int, with_details: bool):
     """Chạy IngestPipeline cho các nguồn được chọn trong background."""
-    from ..pipeline.ingest import IngestPipeline
+    from ..pipeline.ingest import DEFAULT_QUERIES, IngestPipeline
     from ..sources.vietnamworks import VietnamWorksAdapter
     from ..sources.itviec import ITviecAdapter
     from ..sources.careerviet import CareerVietAdapter
@@ -130,9 +130,9 @@ async def _run_rescan(store: JobStore, source: str, query: str,
             from ..sources.topcv import TopCVAdapter
             adapters.append(TopCVAdapter())
         pipeline = IngestPipeline(store, adapters)
-        result = await pipeline.run(queries=list(dict.fromkeys(
-            [query, "content", "social media", "marketing"])),
-            max_results_per_query=max_results)
+        # từ khoá người dùng gõ quét trước, rồi đủ role list (DEFAULT_QUERIES) để không sót nhóm nghề nào
+        result = await pipeline.run(queries=list(dict.fromkeys([query, *DEFAULT_QUERIES])),
+                                    max_results_per_query=max_results)
         n = 0
         if with_details:
             n = await enrich_job_details(store, source)

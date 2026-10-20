@@ -217,7 +217,7 @@ Pipeline **chỉ lấy và lưu job thuộc role list**: social media, content c
 
 - **Cấp bậc** (`job_level`): intern/fresher/junior/middle/senior/lead/manager — tự phân loại từ tiêu đề + số năm kinh nghiệm; filter trên web (`?job_level=senior`), REST (`?job_levels=senior,junior`) và MCP (`job_levels`).
 - **Công ty đang tuyển**: trang `/companies` (top công ty + số việc mở), filter theo tên công ty trên search (`?company=FPT`), API `/api/hiring-companies?q=...` (kèm danh sách job của từng công ty), MCP `company_query`.
-- **Quét lại nguồn (rescan)**: nút "Quét lại dữ liệu nguồn" trên trang tìm kiếm → `POST /rescan` chọn nguồn (VietnamWorks/ITviec/CareerViet/LinkedIn/TopDev/all) + từ khóa → chạy nền, xem trạng thái `GET /api/rescan/status`. Không chặn request.
+- **Quét lại nguồn (rescan)**: nút "Quét lại dữ liệu nguồn" trên trang tìm kiếm → `POST /rescan` chọn nguồn (VietnamWorks/ITviec/CareerViet/LinkedIn/TopDev/all) + từ khóa → chạy nền, xem trạng thái `GET /api/rescan/status`. Không chặn request. Mỗi lần quét chạy từ khóa đã gõ rồi đủ role list `DEFAULT_QUERIES` (`pipeline/ingest.py`: social media, content creator, content marketing, communication, content executive, social media marketing, marketing executive, social content, brand marketing, content writer, copywriter, creative, + content, truyền thông), nên mất khoảng 10–20 phút.
 
 ## JD đầy đủ hard-code theo từng nguồn
 
