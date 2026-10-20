@@ -1,0 +1,47 @@
+{% from "_macros.html" import icon %}
+{# Thỏ hỏi nhanh: nút thỏ 3D góc phải dưới mọi trang (trừ /assistant), bấm mở chat mini dùng chung API + lịch sử với trang Trợ lý.
+   Three.js + character.glb chỉ tải sau khi trang xong (widget.js), không làm chậm trang tìm việc. #}
+<link rel="stylesheet" href="/static/assistant/widget.css?v={{ asset_v('assistant/widget.css') }}">
+<div class="bw" id="bw" data-guest="{{ 'true' if user.guest else 'false' }}">
+  <div class="bw-hello" id="bw-hello" hidden>
+    <button type="button" class="bw-hello-open">Chào công chúa! Em giúp gì được cho công chúa nè? 🌸</button>
+    <button type="button" class="bw-hello-x" aria-label="Ẩn lời chào">{{ icon('x') }}</button>
+  </div>
+  <section class="bw-panel" id="bw-panel" role="dialog" aria-label="Hỏi nhanh trợ lý thỏ" hidden>
+    <header class="bw-head">
+      <div class="bw-avatar-slot" id="bw-avatar-slot"><span class="bw-ph" aria-hidden="true">🐰</span></div>
+      <div class="bw-intro">
+        <p class="bw-hi">Chào công chúa!</p>
+        <p class="bw-status" id="bw-status" role="status">Em giúp gì được cho công chúa ạ?</p>
+      </div>
+      <div class="bw-tools">
+        <button type="button" class="bw-head-btn bw-new" id="bw-new" aria-label="Chat mới" title="Chat mới">{{ icon('sparkles') }}</button>
+        <a class="bw-head-btn bw-expand" id="bw-expand" href="/assistant" aria-label="Mở rộng trong trang Trợ lý AI" title="Mở rộng trong trang Trợ lý AI">{{ icon('external') }}<span>Mở rộng</span></a>
+        <button type="button" class="bw-head-btn bw-close" id="bw-close" aria-label="Đóng" title="Đóng">{{ icon('x') }}</button>
+      </div>
+    </header>
+    <div class="bw-chips">
+      <button type="button" class="bw-chip" data-prompt="Có việc content nào mới đăng tuần này không?">Có việc content nào mới đăng tuần này không?</button>
+      <button type="button" class="bw-chip" data-prompt="Việc nào đang trả lương cao nhất?">Việc nào đang trả lương cao nhất?</button>
+      <button type="button" class="bw-chip" data-prompt="Lương content executive ở TP.HCM thường bao nhiêu?">Lương content executive ở TP.HCM thường bao nhiêu?</button>
+    </div>
+    <div class="bw-thread" id="bw-thread" role="log" aria-live="polite"></div>
+    <form class="bw-form" id="bw-form">
+      <textarea id="bw-input" rows="1" maxlength="4000" placeholder="Hỏi em bất cứ điều gì…" aria-label="Câu hỏi cho trợ lý thỏ"></textarea>
+      <button type="submit" class="bw-send" id="bw-send" aria-label="Gửi">{{ icon('send') }}</button>
+    </form>
+  </section>
+  <button type="button" class="bw-fab" id="bw-fab" aria-expanded="false" aria-controls="bw-panel" aria-label="Hỏi trợ lý thỏ">
+    <span class="bw-fab-slot" id="bw-fab-slot"><span class="bw-ph" aria-hidden="true">🐰</span><canvas id="bw-canvas" aria-hidden="true"></canvas></span>
+    <span class="bw-fab-tag" aria-hidden="true">Hỏi em</span>
+  </button>
+</div>
+<script type="importmap">
+{"imports": {
+  "three": "/static/vendor/three/build/three.module.js",
+  "three/addons/": "/static/vendor/three/examples/jsm/",
+  "/static/assistant/stage.js": "/static/assistant/stage.js?v={{ asset_v('assistant/stage.js') }}",
+  "/static/assistant/chat-core.js": "/static/assistant/chat-core.js?v={{ asset_v('assistant/chat-core.js') }}"
+}}
+</script>
+<script type="module" src="/static/assistant/widget.js?v={{ asset_v('assistant/widget.js') }}"></script>

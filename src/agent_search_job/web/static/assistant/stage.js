@@ -118,28 +118,31 @@ export function createStage(canvas, { orbSlot, avatarSlot }) {
   let target = STATES.idle, hue = 0;
   const timer = new THREE.Timer();
   timer.connect(document);
-  const views = [[orbSlot, orbScene, orbCam], [avatarSlot, avatarScene, avatarCam]];
+  // orbSlot không bắt buộc: widget thỏ ở các trang khác chỉ có nhân vật (canvas nhỏ riêng, avatarSlot = chính canvas)
+  const views = [[orbSlot, orbScene, orbCam], [avatarSlot, avatarScene, avatarCam]].filter(([slot]) => slot);
 
   const frame = () => {
     if (lost) return; // sau khi mất context thì dừng hẳn: không vẽ lại kể cả khi three tự khôi phục context
     timer.update();
     const dt = Math.min(timer.getDelta(), 0.1), t = timer.getElapsed();
     const still = reduced.matches; // giảm chuyển động: chỉ đổi màu theo trạng thái
-    for (const k of ["scale", "noise", "pulse", "hue"]) cur[k] = still ? target[k] : THREE.MathUtils.damp(cur[k], target[k], 4, dt);
-    hue = still ? target.hue * 2 : hue + cur.hue * dt;
-    coreMat.uniforms.uHue.value = Math.sin(hue) * 0.35;
-    orb.scale.setScalar(cur.scale * (1 + (still ? 0 : cur.pulse * Math.sin(t * 2.4))));
-    orb.rotation.y += still ? 0 : dt * 0.15;
-    if (!still && cur.noise > 0.002) {
-      // biến dạng vỏ khi "đang nghĩ": dời đỉnh theo nhiễu sin theo pháp tuyến
-      const p = shellGeo.attributes.position.array;
-      for (let i = 0; i < p.length; i += 3) {
-        const x = basePos[i], y = basePos[i + 1], z = basePos[i + 2];
-        const n = 1 + cur.noise * Math.sin(x * 3 + t * 2) * Math.sin(y * 3 + t * 2.6) * Math.sin(z * 3 + t * 1.4);
-        p[i] = x * n; p[i + 1] = y * n; p[i + 2] = z * n;
+    if (orbSlot) { // không có orb (widget thỏ) thì khỏi tính biến dạng vỏ mỗi frame
+      for (const k of ["scale", "noise", "pulse", "hue"]) cur[k] = still ? target[k] : THREE.MathUtils.damp(cur[k], target[k], 4, dt);
+      hue = still ? target.hue * 2 : hue + cur.hue * dt;
+      coreMat.uniforms.uHue.value = Math.sin(hue) * 0.35;
+      orb.scale.setScalar(cur.scale * (1 + (still ? 0 : cur.pulse * Math.sin(t * 2.4))));
+      orb.rotation.y += still ? 0 : dt * 0.15;
+      if (!still && cur.noise > 0.002) {
+        // biến dạng vỏ khi "đang nghĩ": dời đỉnh theo nhiễu sin theo pháp tuyến
+        const p = shellGeo.attributes.position.array;
+        for (let i = 0; i < p.length; i += 3) {
+          const x = basePos[i], y = basePos[i + 1], z = basePos[i + 2];
+          const n = 1 + cur.noise * Math.sin(x * 3 + t * 2) * Math.sin(y * 3 + t * 2.6) * Math.sin(z * 3 + t * 1.4);
+          p[i] = x * n; p[i + 1] = y * n; p[i + 2] = z * n;
+        }
+        shellGeo.attributes.position.needsUpdate = true;
+        shellGeo.computeVertexNormals();
       }
-      shellGeo.attributes.position.needsUpdate = true;
-      shellGeo.computeVertexNormals();
     }
     mixer?.update(dt);
     if (!still && charRoot && procedural) {
@@ -177,7 +180,7 @@ export function createStage(canvas, { orbSlot, avatarSlot }) {
       }
       uArm.value.set(liftL, liftR);
     }
-    const h = canvas.clientHeight;
+    const c = canvas.getBoundingClientRect(); // toạ độ ô tính theo canvas: canvas toàn trang (trang Trợ lý) hoặc nhỏ (widget)
     renderer.setScissorTest(false);
     renderer.clear();
     renderer.setScissorTest(true);
@@ -186,8 +189,8 @@ export function createStage(canvas, { orbSlot, avatarSlot }) {
       if (r.width < 2 || r.height < 2 || (scene === avatarScene && !character)) continue;
       cam.aspect = r.width / r.height;
       cam.updateProjectionMatrix();
-      renderer.setViewport(r.left, h - r.bottom, r.width, r.height);
-      renderer.setScissor(r.left, h - r.bottom, r.width, r.height);
+      renderer.setViewport(r.left - c.left, c.bottom - r.bottom, r.width, r.height);
+      renderer.setScissor(r.left - c.left, c.bottom - r.bottom, r.width, r.height);
       renderer.render(scene, cam);
     }
   };
@@ -200,7 +203,7 @@ export function createStage(canvas, { orbSlot, avatarSlot }) {
     if (resized) renderer.setSize(canvas.clientWidth, canvas.clientHeight, false);
     if (resized || reduced.matches) frame();
   });
-  for (const node of [canvas, orbSlot, avatarSlot]) ro.observe(node);
+  for (const node of [canvas, orbSlot, avatarSlot]) if (node) ro.observe(node);
   const ac = new AbortController(); // gỡ mọi listener một lượt (dispose() hoặc mất context)
   document.addEventListener("visibilitychange", play, { signal: ac.signal });
   reduced.addEventListener("change", () => { play(); frame(); }, { signal: ac.signal });

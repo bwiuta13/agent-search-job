@@ -19,7 +19,7 @@ from html import unescape
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 
 from ..assistant.agent import run_agent
 from ..domain.models import utcnow
@@ -53,13 +53,25 @@ def chat_owner(request: Request, user: dict = Depends(current_user)) -> str:
     return owner
 
 
+def _set_guest_cookie(request: Request, user: dict, resp) -> None:
+    """Khách (public mode) chưa có cookie hợp lệ -> cấp cookie riêng làm owner cho lịch sử/hồ sơ, sống 1 ngày như dữ liệu chat."""
+    if user.get("guest") and not GUEST_TOKEN.fullmatch(request.cookies.get(GUEST_COOKIE, "")):
+        resp.set_cookie(GUEST_COOKIE, secrets.token_urlsafe(24), httponly=True, samesite="lax",
+                        secure=request.url.scheme == "https", max_age=86400)
+
+
 @router.get("/assistant", response_class=HTMLResponse)
 async def assistant_page(request: Request, user: dict = Depends(current_user)):
     resp = templates.TemplateResponse(request, "assistant.html", {"user": user})
-    if user.get("guest") and not GUEST_TOKEN.fullmatch(request.cookies.get(GUEST_COOKIE, "")):
-        # khách (public mode): cookie riêng làm owner cho lịch sử/hồ sơ, sống 1 ngày như dữ liệu chat
-        resp.set_cookie(GUEST_COOKIE, secrets.token_urlsafe(24), httponly=True, samesite="lax",
-                        secure=request.url.scheme == "https", max_age=86400)
+    _set_guest_cookie(request, user, resp)
+    return resp
+
+
+@router.post("/api/assistant/guest-session", dependencies=[Depends(same_origin)])
+async def guest_session(request: Request, user: dict = Depends(current_user)):
+    """Widget thỏ ở các trang khác: khách chưa từng mở /assistant thì chưa có cookie -> xin trước khi chat (API khác trả 401)."""
+    resp = JSONResponse({"guest": bool(user.get("guest"))})
+    _set_guest_cookie(request, user, resp)
     return resp
 
 

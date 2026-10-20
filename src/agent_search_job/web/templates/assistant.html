@@ -8,14 +8,16 @@
 {"imports": {
   "three": "/static/vendor/three/build/three.module.js",
   "three/addons/": "/static/vendor/three/examples/jsm/",
-  "/static/assistant/stage.js": "/static/assistant/stage.js?v={{ asset_v('assistant/stage.js') }}"
+  "/static/assistant/stage.js": "/static/assistant/stage.js?v={{ asset_v('assistant/stage.js') }}",
+  "/static/assistant/chat-core.js": "/static/assistant/chat-core.js?v={{ asset_v('assistant/chat-core.js') }}"
 }}
 </script>
-{# stage.js được chat.js import("./stage.js") -> đổi phiên bản qua importmap ở trên (import map ánh xạ được cả URL) #}
+{# stage.js / chat-core.js được chat.js import tương đối -> đổi phiên bản qua importmap ở trên (import map ánh xạ được cả URL) #}
 <script type="module" src="/static/assistant/chat.js?v={{ asset_v('assistant/chat.js') }}"></script>
 {% endblock %}
 {% block header %}{% endblock %}
 {% block footer %}{% endblock %}
+{% block widget %}{% endblock %}
 {% block content %}
 <canvas id="stage" aria-hidden="true"></canvas>
 <div class="as-shell" data-guest="{{ 'true' if user.guest else 'false' }}">

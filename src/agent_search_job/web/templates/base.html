@@ -42,5 +42,7 @@
     Website kín (invite-only) · Luôn kiểm tra trang nguồn trước khi ứng tuyển
   </footer>
   {% endblock %}
+  {# thỏ hỏi nhanh góc phải dưới; trang Trợ lý đã có chat đầy đủ nên bỏ block này #}
+  {% block widget %}{% if user %}{% include "_bunny_widget.html" %}{% endif %}{% endblock %}
 </body>
 </html>

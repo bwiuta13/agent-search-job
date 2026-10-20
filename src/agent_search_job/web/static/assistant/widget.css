@@ -1,0 +1,154 @@
+/* Thỏ hỏi nhanh (_bunny_widget.html, mọi trang trừ /assistant): nút thỏ 3D đứng trên đế kính hồng góc phải dưới,
+   bấm mở card chat mini kính hồng. Màu/phông lấy từ token :root của app.css. */
+.bw { position: fixed; right: 20px; bottom: 20px; z-index: 40; font-family: var(--font-body); color: var(--ink); }
+.bw [hidden] { display: none !important; }
+.bw button { font-family: inherit; }
+.bw canvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
+.bw-ph { font-size: 44px; line-height: 1; filter: drop-shadow(0 6px 8px rgba(194, 54, 107, .25)); animation: bw-bob 3s ease-in-out infinite; }
+.has-character .bw-ph { display: none; } /* thỏ 3D đã lên: bỏ emoji giữ chỗ (mất WebGL thì stage gỡ class -> emoji hiện lại) */
+
+/* ---------- Nút mở: thỏ trên đế ---------- */
+.bw-fab { position: relative; display: block; width: 84px; height: 100px; padding: 0; border: 0; background: none; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.bw-fab::before { /* đế kính hồng dưới chân thỏ */
+  content: ""; position: absolute; left: 6px; right: 6px; bottom: 6px; height: 24px; border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(255, 255, 255, .95), rgba(247, 183, 203, .7) 55%, rgba(238, 148, 179, .25));
+  box-shadow: 0 8px 18px -6px rgba(194, 54, 107, .45), inset 0 1px 0 rgba(255, 255, 255, .9);
+}
+.bw-fab-slot { position: absolute; inset: 0 0 14px; display: grid; place-items: center; transition: transform .25s; }
+.bw-fab:hover .bw-fab-slot { transform: translateY(-3px); }
+.bw-fab:focus-visible { outline: 3px solid var(--rose-deep); outline-offset: 3px; border-radius: 22px; }
+.bw-fab-tag {
+  position: absolute; left: 50%; bottom: -6px; transform: translateX(-50%); padding: 2px 10px; border-radius: 999px; white-space: nowrap;
+  background: #fff; border: 1px solid var(--line-strong); box-shadow: var(--shadow); font-size: 11px; font-weight: 700; color: var(--accent);
+}
+
+/* ---------- Lời chào cạnh thỏ (1 lần mỗi phiên) ---------- */
+.bw-hello {
+  position: absolute; right: 92px; bottom: 46px; width: max-content; max-width: 220px; padding: 10px 30px 10px 14px;
+  border-radius: 16px 16px 4px 16px; background: rgba(255, 255, 255, .94); border: 1px solid var(--line-strong);
+  box-shadow: var(--shadow-lift); backdrop-filter: blur(12px); animation: bw-pop .35s cubic-bezier(.2, .8, .2, 1) both;
+}
+.bw-hello-open { padding: 0; border: 0; background: none; text-align: left; font-size: 13.5px; line-height: 1.45; color: var(--ink); cursor: pointer; }
+.bw-hello-x { position: absolute; top: 5px; right: 5px; display: grid; place-items: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--muted); cursor: pointer; }
+.bw-hello-x:hover { background: var(--petal); color: var(--accent); }
+
+/* ---------- Card chat ---------- */
+.bw-panel {
+  position: absolute; right: 0; bottom: 0; display: flex; flex-direction: column; overflow: hidden;
+  width: 372px; height: min(600px, calc(100vh - 40px)); height: min(600px, calc(100dvh - 40px)); border-radius: 26px;
+  background: linear-gradient(180deg, rgba(255, 236, 244, .95), rgba(255, 250, 252, .96) 45%, rgba(255, 255, 255, .97));
+  border: 1px solid rgba(255, 255, 255, .95); backdrop-filter: blur(18px) saturate(1.2);
+  box-shadow: 0 28px 64px -24px rgba(194, 54, 107, .45), 0 2px 8px rgba(122, 40, 76, .08);
+  transform-origin: bottom right; animation: bw-open .28s cubic-bezier(.2, .8, .2, 1) both;
+}
+.bw-head { position: relative; flex: none; display: flex; flex-direction: column; align-items: center; padding: 22px 20px 10px; text-align: center; }
+.bw-avatar-slot { position: relative; display: grid; place-items: center; width: 132px; height: 150px; transition: width .3s, height .3s; cursor: grab; touch-action: none; }
+.bw-avatar-slot::before { /* quầng hồng sau lưng thỏ */
+  content: ""; position: absolute; inset: 14% 6% 4%; border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(247, 183, 203, .55), rgba(201, 182, 242, .25) 60%, transparent);
+}
+.bw-intro { min-width: 0; }
+.bw-hi { margin: 6px 0 2px; font: 800 22px/1.2 var(--font-display); }
+.bw-status { margin: 0; font-size: 14px; color: var(--muted); }
+.bw-tools { position: absolute; top: 10px; left: 10px; right: 10px; display: flex; gap: 4px; }
+.bw-head-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 5px; height: 30px; min-width: 30px; padding: 0 10px;
+  border: 1px solid transparent; border-radius: 999px; background: rgba(255, 255, 255, .7); color: var(--muted);
+  font-size: 12px; font-weight: 600; text-decoration: none; cursor: pointer;
+}
+.bw-head-btn:hover { background: #fff; border-color: var(--line-strong); color: var(--accent); }
+.bw-close { margin-left: auto; padding: 0; }
+.bw-new { display: none; padding: 0; }
+
+.bw-chips { flex: none; display: flex; flex-direction: column; gap: 8px; padding: 6px 18px 0; }
+.bw-chip {
+  padding: 9px 14px; border: 1px solid var(--line-strong); border-radius: 14px; background: rgba(255, 255, 255, .8);
+  text-align: left; font-size: 13.5px; font-weight: 500; color: var(--ink); cursor: pointer; transition: background .15s, border-color .15s;
+}
+.bw-chip:hover { background: var(--petal); border-color: var(--rose); }
+
+/* Đã có hội thoại: phần chào thu thành 1 hàng (thỏ nhỏ + trạng thái + nút), nhường chỗ cho tin nhắn */
+.bw-panel.has-chat .bw-head { flex-direction: row; gap: 10px; padding: 8px 10px 8px 12px; text-align: left; border-bottom: 1px solid var(--line); }
+.bw-panel.has-chat .bw-avatar-slot { width: 50px; height: 58px; }
+.bw-panel.has-chat .bw-avatar-slot .bw-ph { font-size: 30px; }
+.bw-panel.has-chat .bw-intro { flex: 1; }
+.bw-panel.has-chat .bw-hi { margin: 0; font-size: 15px; }
+.bw-panel.has-chat .bw-status { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; font-size: 12.5px; line-height: 1.35; }
+.bw-panel.has-chat .bw-tools { position: static; }
+.bw-panel.has-chat .bw-new { display: inline-flex; }
+.bw-panel.has-chat .bw-expand { padding: 0; }
+.bw-panel.has-chat .bw-expand span, .bw-panel.has-chat .bw-chips { display: none; }
+
+/* ---------- Tin nhắn (cùng class với trang Trợ lý, chat-core.js dựng; assistant.css không nạp ở đây) ---------- */
+.bw-thread { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 12px; padding: 12px 14px; }
+.bw .as-msg { display: flex; flex-direction: column; gap: 6px; }
+.bw .as-msg.user { align-items: flex-end; }
+.bw .as-bubble { max-width: 92%; padding: 9px 13px; border-radius: 16px; font-size: 14px; line-height: 1.55; overflow-wrap: anywhere; }
+.bw .as-msg.user .as-bubble { background: var(--petal); border-bottom-right-radius: 5px; white-space: pre-wrap; }
+.bw .as-msg.assistant .as-bubble { align-self: flex-start; background: #fff; border: 1px solid var(--line); border-bottom-left-radius: 5px; box-shadow: var(--shadow); }
+.bw .as-msg.assistant .as-bubble:empty { display: none; }
+.bw .as-msg.pending::after { /* chờ chữ đầu tiên: 3 chấm nhấp nháy */
+  content: "• • •"; align-self: flex-start; padding: 6px 14px; border-radius: 16px; border: 1px solid var(--line);
+  background: #fff; color: var(--rose-deep); letter-spacing: 2px; animation: bw-blink 1.2s infinite;
+}
+.bw .as-bubble > :first-child { margin-top: 0; }
+.bw .as-bubble > :last-child { margin-bottom: 0; }
+.bw .as-bubble p { margin: 6px 0; }
+.bw .as-bubble ul, .bw .as-bubble ol { margin: 6px 0; padding-left: 18px; }
+.bw .as-bubble h1, .bw .as-bubble h2, .bw .as-bubble h3, .bw .as-bubble h4, .bw .as-bubble h5, .bw .as-bubble h6 { margin: 10px 0 4px; font-size: 14.5px; }
+.bw .as-bubble a { color: var(--accent); }
+.bw .as-bubble pre { overflow-x: auto; }
+.bw .as-bubble table { display: block; overflow-x: auto; border-collapse: collapse; font-size: 12.5px; }
+.bw .as-bubble th, .bw .as-bubble td { padding: 4px 6px; border: 1px solid var(--line); text-align: left; }
+.bw .as-jobs { display: flex; flex-direction: column; gap: 8px; }
+.bw .as-job { display: flex; flex-direction: column; gap: 3px; padding: 10px 12px; border-radius: 14px; background: #fff; border: 1px solid var(--line); box-shadow: var(--shadow); }
+.bw .as-job-title { font-size: 14px; font-weight: 700; line-height: 1.35; color: var(--accent); text-decoration: none; }
+.bw .as-job-title:hover { text-decoration: underline; }
+.bw .as-job-co { font-size: 12.5px; font-weight: 600; }
+.bw .as-job-meta { font-size: 12.5px; color: var(--muted); }
+.bw .as-job-save {
+  align-self: flex-start; margin-top: 3px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--rose);
+  background: var(--petal); font-size: 12px; font-weight: 600; color: var(--accent); cursor: pointer;
+}
+.bw .as-sources { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; font-size: 12px; }
+.bw .as-sources a { display: inline-block; padding: 3px 10px; border-radius: 999px; background: var(--lilac-bg); color: var(--lilac); text-decoration: none; }
+.bw .as-error { margin: 0; padding: 8px 12px; border-radius: 12px; background: var(--warn-bg); color: var(--warn); font-size: 13.5px; }
+.bw .as-error button { margin-left: 6px; padding: 2px 10px; border: 1px solid currentColor; border-radius: 999px; background: none; color: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+
+/* ---------- Ô nhập: viền gradient hồng -> tím -> ngọc như ảnh mẫu ---------- */
+.bw-form {
+  flex: none; display: flex; align-items: flex-end; gap: 8px; margin: 6px 12px 12px; padding: 5px 5px 5px 14px; border-radius: 22px;
+  border: 1.5px solid transparent;
+  background: linear-gradient(#fff, #fff) padding-box, linear-gradient(120deg, var(--rose-deep), #c9b6f2, #8fd9d3) border-box;
+  box-shadow: 0 8px 20px -12px rgba(194, 54, 107, .5); transition: box-shadow .15s;
+}
+.bw-form:focus-within { box-shadow: 0 0 0 4px rgba(247, 183, 203, .4), 0 8px 20px -12px rgba(194, 54, 107, .5); }
+.bw-form textarea {
+  flex: 1; min-width: 0; max-height: 120px; padding: 8px 0; border: 0; outline: 0; resize: none; background: transparent;
+  font: 14.5px/1.45 var(--font-body); color: var(--ink);
+}
+.bw-form textarea::placeholder { color: #b38aa0; }
+.bw-send { flex: none; display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 50%; background: var(--accent); color: #fff; cursor: pointer; }
+.bw-send:hover { background: var(--accent-hover); }
+.bw-send.stop { background: var(--ink); }
+.bw-send.stop .i { display: none; }
+.bw-send.stop::before { content: ""; width: 11px; height: 11px; border-radius: 2px; background: #fff; } /* nút Dừng */
+
+@keyframes bw-open { from { opacity: 0; transform: translateY(12px) scale(.96); } }
+@keyframes bw-pop { from { opacity: 0; transform: translateY(6px) scale(.95); } }
+@keyframes bw-bob { 50% { transform: translateY(-4px); } }
+@keyframes bw-blink { 50% { opacity: .35; } }
+
+/* Mobile: card thành bottom sheet; chữ 16px để iOS không tự phóng to khi gõ */
+@media (max-width: 600px) {
+  .bw { right: 12px; bottom: 12px; }
+  .bw-fab { width: 70px; height: 84px; }
+  .bw-hello { right: 78px; bottom: 38px; max-width: 190px; }
+  .bw-panel { position: fixed; left: 0; right: 0; bottom: 0; width: auto; height: min(640px, 88vh); height: min(640px, 88dvh); border-radius: 24px 24px 0 0; }
+  .bw-form textarea { font-size: 16px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bw-panel, .bw-hello, .bw-ph, .bw .as-msg.pending::after { animation: none; }
+  .bw-avatar-slot, .bw-fab-slot { transition: none; }
+}
+@media print { .bw { display: none; } }

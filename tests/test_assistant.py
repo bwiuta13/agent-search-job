@@ -1109,3 +1109,40 @@ class TestPage:
     def test_vendor_modules_served_as_js(self, app, path):
         r = login(app).get(path)
         assert r.status_code == 200 and "javascript" in r.headers["content-type"]
+
+
+class TestBunnyWidget:
+    """Widget thỏ hỏi nhanh: mọi trang có đăng nhập trừ /assistant (base.html block widget)."""
+
+    def test_widget_on_every_page_except_assistant_and_login(self, app):
+        assert 'id="bw"' not in TestClient(app.app).get("/").text  # trang đăng nhập: chưa có user
+        client = login(app)
+        for path in ("/search", "/companies", "/saved"):
+            r = client.get(path)
+            assert r.status_code == 200 and 'id="bw"' in r.text and 'data-guest="false"' in r.text, path
+            assert "/static/assistant/widget.js" in r.text and '"three": "/static/vendor/three/build/three.module.js"' in r.text
+        assert 'id="bw"' not in client.get("/assistant").text  # trang Trợ lý đã có chat đầy đủ
+
+    def test_guest_gets_cookie_from_widget_session(self, public_app):
+        guest = TestClient(public_app.app)
+        r = guest.get("/search")
+        assert 'id="bw"' in r.text and 'data-guest="true"' in r.text
+        assert guest.get("/api/assistant/conversations").status_code == 401  # chưa từng mở /assistant -> chưa có cookie
+        r = guest.post("/api/assistant/guest-session")
+        assert r.status_code == 200 and r.json() == {"guest": True}
+        assert re.search(r"vnjobs_guest=[A-Za-z0-9_-]{32}", r.headers["set-cookie"]) and "HttpOnly" in r.headers["set-cookie"]
+        assert guest.get("/api/assistant/conversations").status_code == 200
+        r = guest.post("/api/assistant/guest-session")  # đã có cookie hợp lệ -> không cấp lại
+        assert "set-cookie" not in r.headers
+        assert guest.post("/api/assistant/guest-session", headers={"origin": "https://evil.example"}).status_code == 403
+
+    def test_signed_in_user_gets_no_guest_cookie(self, app):
+        r = login(app).post("/api/assistant/guest-session")
+        assert r.json() == {"guest": False} and "vnjobs_guest" not in r.headers.get("set-cookie", "")
+
+    @pytest.mark.parametrize("path", ["/static/assistant/widget.js", "/static/assistant/chat-core.js",
+                                      "/static/assistant/widget.css"])
+    def test_widget_assets_served(self, app, path):
+        r = login(app).get(path)
+        assert r.status_code == 200
+        assert ("css" if path.endswith(".css") else "javascript") in r.headers["content-type"]

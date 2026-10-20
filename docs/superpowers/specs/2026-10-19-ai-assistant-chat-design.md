@@ -158,6 +158,7 @@ Tất cả dưới `current_user` (cookie session hoặc bearer); khách (public
 | Method | Path | Mô tả |
 |---|---|---|
 | GET | `/assistant` | trang chat (HTML) |
+| POST | `/api/assistant/guest-session` | widget thỏ ở trang khác: khách (public mode) chưa có cookie `vnjobs_guest` hợp lệ thì được cấp (cùng cờ với trang `/assistant`) → `{guest: bool}`; người đã đăng nhập không nhận cookie |
 | POST | `/api/assistant/chat` | body `{conversation_id?: int, message: str (1..4000), deep_think: bool}` → `text/event-stream` |
 | GET | `/api/assistant/conversations` | danh sách hội thoại còn hạn của owner (id, title, updated_at) |
 | GET | `/api/assistant/conversations/{id}` | tin nhắn + `meta` (thẻ job, nguồn) |
@@ -258,6 +259,14 @@ CREATE TABLE IF NOT EXISTS assistant_usage (
 - **Fallback**: markup mặc định là **orb CSS** (radial + conic gradient, blur, đổi theo `data-state`); chỉ thêm class `.webgl-on` (ẩn orb CSS) khi `WebGL.isWebGL2Available()` và khởi tạo thành công. Import lỗi → orb CSS giữ nguyên.
 - **Mất WebGL context là kết thúc cho phiên trang**: `webglcontextlost` → dừng vòng lặp, gỡ `.webgl-on` (orb CSS hiện lại), ẩn canvas, gỡ mọi listener qua `AbortController`. Không khởi động lại: three.js tự restore context nhưng env PMREM không được dựng lại, nên `visibilitychange` / đổi `prefers-reduced-motion` không được bật lại vòng lặp.
 - `app.py`: `mimetypes.add_type("model/gltf-binary", ".glb")` cho nhân vật sau này.
+
+### 8.1 Widget thỏ hỏi nhanh (20/10/2026)
+
+- `base.html` có `{% block widget %}` include `_bunny_widget.html` khi có `user`; `assistant.html` để trống block này (trang Trợ lý đã có chat đầy đủ). Partial tự mang `widget.css`, importmap (`three`, `three/addons/`, URL có `?v=` cho `stage.js` và `chat-core.js`) và `widget.js` — các trang khác không có module script nào trước nó.
+- `chat-core.js` (dùng chung với `chat.js`): `el`, `md` (marked + DOMPurify allowlist), `ERR_GENERIC`/`ApiError`/`apiText`, `readSSE(response, onEvent)`, `addJobs(wrap, jobs, guest)`, `addSources(wrap, sources)`.
+- 1 canvas nhỏ, `createStage(canvas, {avatarSlot: canvas})` (không có orb): canvas chuyển giữa ô trên nút mở và ô đầu card (giữ nguyên context WebGL); viewport tính theo `getBoundingClientRect()` của canvas.
+- Nạp 3D: sau `load` + `requestIdleCallback` khi màn ≥ 768px, còn lại khi mở card; bỏ qua khi `navigator.connection.saveData`; lỗi nạp → `dispose()`, giữ thỏ emoji.
+- Chat mini: `deep_think: false`, trạng thái (nghĩ / tên tool / đang trả lời / xong) hiện ở dòng dưới lời chào thay cho danh sách bước; Dừng, Thử lại, Chat mới như trang Trợ lý. `sessionStorage` `bw-conv` (id hội thoại), `bw-open` (card đang mở → tự mở lại ở trang sau, không lấy focus), `bw-hello` (đã chào). "Mở rộng" → `/assistant?c=<id>`: `chat.js` mở hội thoại đó rồi `history.replaceState` về `/assistant`.
 
 ## 9. Xử lý lỗi
 
