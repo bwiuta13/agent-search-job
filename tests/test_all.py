@@ -740,6 +740,73 @@ class TestWebAPI:
 # LLM enrichment (mock httpx, không gọi mạng thật)
 # ---------------------------------------------------------------------------
 
+class TestCareerViet:
+    """CareerViet đổi giao diện (Next.js): link việc /vi/tim-viec-lam/<slug>.<mã>.html, khối div.job-item."""
+
+    @staticmethod
+    def _fake_client(monkeypatch, module, pages):
+        class FakeClient:
+            def __init__(self, **kw): pass
+            async def __aenter__(self): return self
+            async def __aexit__(self, *a): return False
+            async def get(self, url):
+                return type("R", (), {"status_code": 200, "text": pages[url]})()
+        monkeypatch.setattr(module.httpx, "AsyncClient", FakeClient)
+
+    async def test_listing_parses_job_items(self, monkeypatch):
+        import agent_search_job.sources.careerviet as cv
+        from agent_search_job.sources.base import DiscoverInput
+        item = ('<div class="job-item  " id="job-item-{id}"><div class="figure"><a title="{co}" href="/vi/nha-tuyen-dung/x.1.html">'
+                '<img alt="{co}"/></a></div><div class="figcaption"><div class="title "><h2><a class="job_link" data-id="{id}" '
+                'target="_blank" title="{title}" rel="noopener noreferrer" href="/vi/tim-viec-lam/{slug}.{id}.html">{title}</a></h2></div>'
+                '<div class="caption"><a class="company-name" target="_blank" title="{co}" href="/vi/nha-tuyen-dung/x.1.html">{co}</a>'
+                '<a class="job_link" data-id="{id}" href="/vi/tim-viec-lam/{slug}.{id}.html"><div class="salary"><p><em class="fa fa-usd"></em>'
+                '{salary}</p></div><div class="location"><em class="mdi mdi-map-marker"></em><ul><li>Hồ Chí Minh</li></ul></div>'
+                '<div class="time"><ul><li><em class="fa fa-clock-o"></em> <span>Hạn nộp<!-- -->: </span><time>13-11-2026</time></li>'
+                '<li><span>Cập nhật<!-- -->:</span> <time>14-10-2026</time></li></ul></div></a></div>'
+                '<svg width="16" height="16">' + "M1 2L3 4" * 400 + '</svg></div>')
+        page = ('<html><title>Tuyển dụng 2 việc làm content marketing</title>'
+                + item.format(id="35C8A83A", slug="chuyen-vien-content-marketing", title="Chuyên viên Content Marketing",
+                              co="Công ty cổ phần Lữ hành Vietluxtour", salary="Cạnh tranh")
+                + item.format(id="35C88CCF", slug="content-executive", title="Content Executive &amp; SEO",
+                              co="Công ty TNHH A", salary="Lương: 15 - 20 Triệu VND")
+                + item.format(id="35C88CCF", slug="content-executive", title="Content Executive &amp; SEO",  # trùng -> bỏ
+                              co="Công ty TNHH A", salary="Lương: 15 - 20 Triệu VND") + "</html>")
+        url = "https://careerviet.vn/viec-lam/content-marketing-tai-ho-chi-minh-kl8-vi.html"
+        self._fake_client(monkeypatch, cv, {url: page})
+        jobs = [normalize_job(j) async for j in cv.CareerVietAdapter().discover(DiscoverInput(query="content marketing"))]
+        assert [j.source_job_id for j in jobs] == ["35C8A83A", "35C88CCF"]
+        lux, ce = jobs
+        assert (lux.title, lux.company_name, lux.salary_text, lux.address) == (
+            "Chuyên viên Content Marketing", "Công ty cổ phần Lữ hành Vietluxtour", "Cạnh tranh", "Hồ Chí Minh")
+        assert lux.source_url == "https://careerviet.vn/vi/tim-viec-lam/chuyen-vien-content-marketing.35C8A83A.html"
+        assert lux.deadline.date().isoformat() == "2026-11-13" and lux.role_cluster == "content_marketing"
+        assert ce.title == "Content Executive & SEO" and (ce.salary_min_vnd, ce.salary_max_vnd) == (15_000_000, 20_000_000)
+        one = [j async for j in cv.CareerVietAdapter().discover(DiscoverInput(query="content marketing", max_results=1))]
+        assert len(one) == 1
+
+    async def test_detail_reads_sections_not_json_ld(self, monkeypatch):
+        import agent_search_job.sources.detail_fetchers as df
+        url = "https://careerviet.vn/vi/tim-viec-lam/chuyen-vien-content-marketing.35C8A83A.html"
+        page = ('<script type="application/ld+json">{"experienceRequirements":{"@type":"OccupationalExperienceRequirements",'
+                '"description":"Kinh nghiệm 1 Năm"},"description":"Mô tả công việc ..."}</script>'
+                '<div class="detail-box"><ul><li><strong><em class="fa fa-usd"></em>Lương</strong><p>Lương: 15 - 20 Triệu VND</p></li>'
+                '<li><strong><em class="mdi mdi-x"></em>Kinh nghiệm</strong><p>3 - 5<!-- --> <!-- -->Năm</p></li></ul></div>'
+                '<div class="detail-row"><h2 class="detail-title">Phúc lợi</h2><ul><li><span class="fa fa-laptop"></span>Laptop</li>'
+                '<li><span class="fa fa-plane"></span>Du Lịch</li></ul></div>'
+                '<div class="detail-row"><h2 class="detail-title">Mô tả Công việc</h2><div><ul>'
+                '<li>Xây dựng Content Pillar cho fanpage và website du lịch</li></ul></div></div>'
+                '<div class="detail-row"><h2 class="detail-title">Yêu Cầu Công Việc</h2><div><ul>'
+                '<li>Có kinh nghiệm Content Marketing 1-2 năm</li></ul></div></div>'
+                '<div class="detail-row"><h3 class="detail-title">Địa điểm làm việc</h3><p>Quận 1</p></div>')
+        self._fake_client(monkeypatch, df, {url: page})
+        d = await df.fetch_detail("careerviet", url)
+        assert "Content Pillar" in d.description and "@type" not in d.description
+        assert d.requirements.startswith("Có kinh nghiệm Content Marketing") and "@type" not in d.requirements
+        assert d.benefits == ["Laptop", "Du Lịch"]
+        assert (d.experience_text, d.salary_text) == ("3 - 5", "15 - 20 Triệu VND")
+
+
 class TestLLMEnrich:
     def _cfg(self):
         from agent_search_job.pipeline.llm_enrich import LLMConfig

@@ -101,7 +101,9 @@ class ITviecDetailFetcher:
 
 
 class CareerVietDetailFetcher:
-    """JD CareerViet: trang detail server render có 'Mô tả công việc'."""
+    """JD CareerViet: trang detail server render, mỗi mục là <div class="detail-row"><h2 class="detail-title">…</h2>
+    (verify 20/10/2026). Neo vào thẻ h2: JSON-LD đầu trang cũng có chữ "Requirements" (experienceRequirements)
+    nên tìm chữ trần sẽ lấy nhầm JSON. Lương, kinh nghiệm ở ô tóm tắt <strong>(<em> icon)Lương</strong><p>…</p>."""
 
     async def fetch(self, url: str, client: httpx.AsyncClient) -> Optional[JobDetail]:
         resp = await client.get(url)
@@ -109,21 +111,20 @@ class CareerVietDetailFetcher:
             return None
         h = resp.text
         d = JobDetail()
-        d.description = _section_after(h, r"(?:Mô tả công việc|Job Description)")
-        d.requirements = _section_after(h, r"(?:Yêu cầu ứng viên|Requirements)")
-        benefits_raw = _section_after(h, r"(?:Quyền lợi|Benefits)")
+        d.description = _section_after(h, r"<h2[^>]*>\s*(?:Mô tả công việc|Job Description)\s*</h2>")
+        d.requirements = _section_after(
+            h, r"<h2[^>]*>\s*(?:Yêu cầu công việc|Yêu cầu ứng viên|Job Requirements?)\s*</h2>")
+        benefits_raw = _section_after(h, r"<h2[^>]*>\s*(?:Phúc lợi|Quyền lợi|Benefits)\s*</h2>")
         if benefits_raw:
             d.benefits = [ln.strip()[:120] for ln in benefits_raw.split("\n")
                           if ln.strip()][:10]
-        m = re.search(
-            r"(?i)kinh nghiệm\s*[</\\a-z0-9>;\"']*?\s*(\d+\s*(?:[-–]\s*\d+)?)\s*(?:năm)",
-            h,
-        )
+        m = re.search(r"<strong>(?:\s*<em[^>]*>\s*</em>)?\s*Kinh nghiệm\s*</strong>\s*<p>(.*?)</p>", h, re.S | re.I)
         if m:
-            d.experience_text = m.group(1)
-        m = re.search(r"(?i)(\d+[\d.,]*\s*(?:triệu|tri)\s*(?:[-–]\s*\d+[\d.,]*\s*(?:triệu|tri))?)", h)
+            exp = re.search(r"\d+(?:\s*[-–]\s*\d+)?", _strip(m.group(1)))
+            d.experience_text = exp.group(0) if exp else ""
+        m = re.search(r"<strong>(?:\s*<em[^>]*>\s*</em>)?\s*Lương\s*</strong>\s*<p>(?:Lương:\s*)?([^<]*)</p>", h, re.I)
         if m:
-            d.salary_text = m.group(1)
+            d.salary_text = m.group(1).strip()
         return d if d.description else None
 
 
