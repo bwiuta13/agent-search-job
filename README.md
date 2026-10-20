@@ -83,6 +83,9 @@ Nếu không tạo `.env`, Compose dùng các giá trị mặc định an toàn 
 Thư mục `data/` và `backups/` được mount từ host nên database và backup không mất khi build lại container.
 Nếu VM đã có database do service systemd tạo, đặt `DATA_DIR`, `BACKUP_DIR`, `APP_UID` và `APP_GID`
 trong `.env` như ví dụ để container dùng trực tiếp dữ liệu cũ mà không phải sao chép.
+Image không chứa `data/`, `backups/`, `.claude/` (worktree), test hay tài liệu (xem `.dockerignore`): database chỉ nằm ở volume.
+Thư viện Python + Chromium được cài ở một lớp riêng chỉ phụ thuộc `pyproject.toml`, nên sửa code/static (Trợ lý AI,
+widget thỏ, `character.glb`) rồi `docker compose up -d --build` chỉ chép lại code, không tải lại Chromium.
 
 Các lệnh vận hành thường dùng:
 
@@ -109,7 +112,7 @@ location / {
 ```
 
 - `proxy_set_header Host $host`: app so header `Origin` với `Host` để chặn POST từ trang khác; mặc định Nginx gửi `Host: 127.0.0.1:8765` nên mọi POST chat/hồ sơ/CV bị 403.
-- `proxy_set_header X-Forwarded-Proto $scheme`: báo scheme gốc để app đặt cookie `Secure` khi chạy https (uvicorn chỉ tin header này từ các IP trong `FORWARDED_ALLOW_IPS`, mặc định `127.0.0.1,::1`).
+- `proxy_set_header X-Forwarded-Proto $scheme`: báo scheme gốc để app đặt cookie `Secure` khi chạy https (uvicorn chỉ tin header này từ các IP trong `FORWARDED_ALLOW_IPS`, mặc định `127.0.0.1,::1`). Chạy bằng Docker Compose thì Nginx gọi vào container từ IP bridge của Docker chứ không phải 127.0.0.1, nên `compose.yaml` đặt `FORWARDED_ALLOW_IPS=*` (an toàn vì cổng chỉ mở ở `127.0.0.1`); thiếu biến này cookie đăng nhập và cookie khách không có cờ `Secure`.
 - `client_max_body_size 6m`: mặc định 1MB, CV 1–5MB sẽ bị 413.
 - `proxy_read_timeout 300s`: mặc định 60 giây; Deep Think có thể suy luận lâu mà chưa có chữ nào. Khi model đang suy luận app gửi `event: thinking` mỗi ~3 giây, còn im lặng hẳn 15 giây thì gửi dòng ping `: ping`; 300 giây là mức dự phòng.
 - `proxy_buffering off`: để câu trả lời stream về từng đoạn thay vì đến một lần.

@@ -5,17 +5,23 @@
 !.env.example
 .venv
 venv
-__pycache__
-*.py[cod]
+**/__pycache__
+**/*.py[cod]
 .pytest_cache
 .ruff_cache
 .mypy_cache
 dist
 build
-*.egg-info
-.DS_Store
+**/*.egg-info
+**/.DS_Store
 file:*
-data/*.db
-data/*.db-*
-data/*.sqlite*
+# data/ là volume mount lúc chạy (compose.yaml), không đưa DB, bản sao lưu hay file .bak nào vào image
+data
 backups
+# công cụ dev: .claude chứa worktree (cả repo + DB của từng nhánh), ledger SDD, test/tài liệu (image không cài pytest)
+.claude
+.superpowers
+tests
+conftest.py
+fixtures
+docs

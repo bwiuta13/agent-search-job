@@ -13,6 +13,10 @@ services:
     environment:
       ALLOWLIST_EMAILS: "${ALLOWLIST_EMAILS-friend@example.com}"
       JOBS_DB: data/jobs.db
+      # Nginx/Caddy trên máy chủ gọi vào container qua IP bridge của Docker, không phải 127.0.0.1 -> uvicorn mặc định
+      # bỏ qua X-Forwarded-Proto và cookie đăng nhập / cookie khách của Trợ lý AI không có cờ Secure dù chạy https.
+      # Tin mọi IP là an toàn vì cổng chỉ mở ở 127.0.0.1 (ports bên trên).
+      FORWARDED_ALLOW_IPS: "${FORWARDED_ALLOW_IPS-*}"
       AI_PROVIDER: "${AI_PROVIDER-openai}"
       AI_TEXT_MODEL: "${AI_TEXT_MODEL-z-ai/glm-5.3}"
       OPENAI_API_KEY: "${OPENAI_API_KEY-}"

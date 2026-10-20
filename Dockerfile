@@ -18,11 +18,13 @@ RUN apt-get update \
     && groupadd --gid "${APP_GID}" app \
     && useradd --create-home --uid "${APP_UID}" --gid "${APP_GID}" app
 
-# Copy dependency metadata and source first so dependency installation stays cached.
+# Cài thư viện + Chromium chỉ từ pyproject.toml (package tạm rỗng), chưa chép code: sửa code/static (widget thỏ,
+# character.glb, Three.js...) không làm mất cache lớp này nên build lại không phải tải lại Chromium. Cài editable
+# (trỏ vào /app/src) nên code thật chép vào ở bước COPY . . bên dưới được dùng ngay.
 COPY pyproject.toml README.md ./
-COPY src ./src
-
-RUN python -m pip install --upgrade pip setuptools wheel \
+RUN mkdir -p src/agent_search_job \
+    && touch src/agent_search_job/__init__.py \
+    && python -m pip install --upgrade pip setuptools wheel \
     && python -m pip install --editable . \
     && python -m playwright install --with-deps chromium
 
