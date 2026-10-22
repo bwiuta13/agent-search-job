@@ -79,6 +79,10 @@ class RescanManager:
             return RescanStatus(True, cls._current.started_at if cls._current else None,
                                 cls._current.source if cls._current else "",
                                 "Một lượt quét đang chạy - thử lại sau khi xong")
+        from .scheduled_scan import ScheduledScanManager  # import trễ: scheduled_scan cũng gọi vào module này
+        if ScheduledScanManager.running():
+            # 2 lượt quét song song = gấp đôi request tới nguồn (LinkedIn trả 429 nhiều hơn) mà không thêm job nào
+            return RescanStatus(True, None, source, "Lượt quét định kỳ đang chạy - thử lại sau khi xong")
         st = RescanStatus(True, utcnow().isoformat(), source, "Đang quét...")
         cls._current = st
         cls._task = asyncio.create_task(

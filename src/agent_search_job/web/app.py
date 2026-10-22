@@ -43,7 +43,9 @@ SESSION_DAYS = 7
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Dọn hội thoại trợ lý AI quá hạn khi khởi động và mỗi giờ — chat bị xoá sau TTL kể cả
-    khi không ai gọi API (dữ liệu không nằm lại trong DB quá 24 giờ + tối đa 1 giờ)."""
+    khi không ai gọi API (dữ liệu không nằm lại trong DB quá 24 giờ + tối đa 1 giờ).
+    Quét định kỳ (SCHEDULED_SCAN_ENABLED=1): quét nguồn -> xoá job hết hạn/ngừng
+    tuyển -> gửi mail job mới, mỗi SCAN_INTERVAL_HOURS (12) giờ."""
     ttl = int(os.environ.get("ASSISTANT_CHAT_TTL_HOURS") or 24)
     get_store().purge_expired_chat(ttl)
 
@@ -56,8 +58,15 @@ async def lifespan(app: FastAPI):
                 pass
 
     task = asyncio.create_task(sweep())
+
+    # vòng lặp quét định kỳ: None nếu SCHEDULED_SCAN_ENABLED != 1 (dùng cron/scripts)
+    from ..pipeline.scheduled_scan import ScheduledScanManager
+    scan_task = await ScheduledScanManager.start_loop(get_store())
+
     yield
     task.cancel()
+    if scan_task is not None:
+        scan_task.cancel()
 
 
 app = FastAPI(title="Agent Search Job", version="0.1.0", docs_url=None, redoc_url=None,
@@ -588,6 +597,15 @@ async def rescan_status(user: dict = Depends(current_user)):
         "started_at": st.started_at, "finished_at": st.finished_at,
         "message": st.message, "ok": st.ok, "log": st.log, "summary": st.summary,
     }
+
+
+@app.get("/api/scheduled-scan/status")
+async def scheduled_scan_status(user: dict = Depends(current_user)):
+    """Trạng thái vòng lặp quét định kỳ (12h): cấu hình, lượt gần nhất, 10 lượt trước."""
+    from ..pipeline.scheduled_scan import ScheduledScanManager, last_scans
+    out = ScheduledScanManager.status()
+    out["history"] = last_scans(get_store(), limit=10)
+    return out
 
 
 @app.get("/api/facets")
