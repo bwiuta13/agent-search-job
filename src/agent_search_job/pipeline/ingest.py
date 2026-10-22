@@ -144,6 +144,11 @@ class CrawlRunResult:
     duplicates_skipped: int = 0
     out_of_scope: int = 0
     out_of_hcm: int = 0
+    # số job bị ẩn (is_active=0) cuối lượt quét: hết hạn nộp + N ngày không thấy lại
+    hidden_expired: int = 0
+    hidden_stale: int = 0
+    # job_id của các job MỚI insert trong lượt này (mail job mới sau lượt quét định kỳ)
+    inserted_job_ids: list[int] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     health: list[SourceHealth] = field(default_factory=list)
 
@@ -157,6 +162,8 @@ class CrawlRunResult:
             "duplicates_skipped": self.duplicates_skipped,
             "out_of_scope": self.out_of_scope,
             "out_of_hcm": self.out_of_hcm,
+            "hidden_expired": self.hidden_expired,
+            "hidden_stale": self.hidden_stale,
             "errors": self.errors,
             "health": [
                 {
@@ -288,6 +295,7 @@ class IngestPipeline:
                 jid = self.store.insert_job(job)
                 seen_keys[key] = jid
                 result.inserted += 1
+                result.inserted_job_ids.append(jid)
         log.info("Lọc: %d job tìm thấy, %d ngoài phạm vi nghề, %d ngoài TP.HCM, "
                  "%d trùng → +%d mới, %d cập nhật", result.discovered, result.out_of_scope,
                  result.out_of_hcm, result.duplicates_skipped, result.inserted, result.updated)
@@ -296,6 +304,8 @@ class IngestPipeline:
         stale_days = int(os.environ.get("JOB_STALE_DAYS", "30") or 0)
         hidden = self.store.mark_expired_inactive(
             stale_days=stale_days, stale_sources=tuple(sorted(crawled_sources)))
+        result.hidden_expired = hidden["expired"]
+        result.hidden_stale = hidden["stale"]
         if hidden["expired"] or hidden["stale"]:
             log.info("Ẩn %d job quá hạn nộp, %d job %d ngày không thấy lại trên nguồn",
                      hidden["expired"], hidden["stale"], stale_days)

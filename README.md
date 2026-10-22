@@ -24,7 +24,8 @@ src/agent_search_job/
                 crawl_runs, saved_jobs, users (invite-only)
   web/          FastAPI: pages + REST API + /mcp endpoint
   mcp/          MCP server (JSON-RPC) + contracts (validation, giới hạn)
-scripts/        crawl.py, enrich_companies.py, serve.py, show_token.py
+scripts/        crawl.py, scheduled_scan.py (quét định kỳ 12h + mail job mới),
+                enrich_companies.py, purge.py, serve.py, show_token.py
 tests/          normalize, storage, MCP protocol, web API, trợ lý AI — chạy offline
 ```
 
@@ -130,6 +131,60 @@ sqlite3 data/jobs.db "UPDATE users SET token='$(python3 -c 'import secrets;print
 
 - Cuối mỗi lần quét: job quá hạn nộp và job `JOB_STALE_DAYS` (30) ngày không thấy lại trên nguồn vừa quét bị ẩn (`is_active=0`, vẫn còn trong DB).
 - `make purge-dry-run`: xem trước số dòng sẽ xoá. `make purge`: backup vào `data/backups/` rồi xoá job đã ẩn quá `JOB_PURGE_AFTER_DAYS` (90) ngày (trừ job có người lưu) kèm cache AI, xoá `crawl_runs` cũ hơn `CRAWL_RUNS_KEEP_DAYS` (90) ngày, rồi `VACUUM`. Công ty + feedback giữ nguyên.
+
+## Quét định kỳ tự động (12 tiếng) + mail job mới
+
+Một lượt quét định kỳ làm đủ 3 việc: **quét mọi nguồn → xoá job chết → gửi mail job mới**:
+
+1. Crawl đầy đủ `DEFAULT_QUERIES` trên mọi nguồn (VietnamWorks, LinkedIn, ITviec, CareerViet, TopDev, VNG) + fetch JD chi tiết — cùng pipeline với nút "Quét ngay" trên web.
+2. Cuối lượt quét, job hết hạn nộp + job `JOB_STALE_DAYS` ngày không thấy lại trên nguồn bị **ẩn** (`is_active=0`); job đã ẩn quá `SCAN_DELETE_AFTER_DAYS` (3) ngày bị **xoá hẳn** kèm cache AI (backup DB vào `data/backups/` trước khi xoá; job có người lưu được giữ).
+3. Nếu có job mới và đã cấu hình SMTP: gửi mail **"N việc làm mới"** tới `MAIL_TO` (danh sách job kèm link trang việc, lương, quận; tối đa `NEW_JOB_MAIL_MAX` job mỗi mail).
+
+Bật vòng lặp trong server (khuyên dùng — chỉ 1 tiến trình, lịch luôn đúng kể cả restart):
+
+```bash
+# .env
+SCHEDULED_SCAN_ENABLED=1      # bật vòng lặp trong tiến trình server
+SCAN_INTERVAL_HOURS=12        # mỗi 12 tiếng 1 lượt
+SCAN_ON_STARTUP=1             # chạy ngay 1 lượt khi khởi động server
+SCAN_DELETE_AFTER_DAYS=3      # xoá hẳn job đã ẩn quá 3 ngày
+SITE_URL=https://your-domain  # link web trong mail (đặt khi chạy sau Nginx)
+```
+
+Hoặc chạy bằng cron ngoài (server không chạy web):
+
+```bash
+0 */12 * * * cd /path/to/agent-search-job && python3 scripts/scheduled_scan.py >> data/scheduled-scan.log 2>&1
+```
+
+Lệnh hữu ích:
+
+```bash
+make scan          # chạy 1 lượt quét định kỳ ngay (quét -> xoá -> mail)
+make scan-status   # xem 10 lượt gần nhất (lịch sử trong bảng scheduled_scans)
+make test-mail     # gửi mail thử tới MAIL_TO (kiểm tra cấu hình SMTP)
+```
+
+REST: `GET /api/scheduled-scan/status` — cấu hình + trạng thái + lịch sử các lượt.
+
+### Cấu hình mail thông báo job mới
+
+Đặt trong `.env` (xem mẫu đầy đủ trong `.env.example` mục "Mail thông báo job mới"):
+
+```bash
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=tencuaban@gmail.com
+SMTP_PASSWORD=app-password      # Gmail: App Password (bật 2FA rồi tạo tại myaccount.google.com/apppasswords)
+MAIL_FROM=tencuaban@gmail.com
+MAIL_TO=ban@gmail.com,nguoib@gmail.com   # nhiều người cách nhau dấu phẩy
+```
+
+- Gmail dùng **App Password** (16 ký tự), không dùng mật khẩu đăng nhập thường.
+- `SMTP_PORT=465` (SMTPS) thì đặt thêm `SMTP_SSL=1`; 587 = STARTTLS (mặc định).
+- Bỏ trống `SMTP_HOST`/`MAIL_TO` → không gửi mail, lượt quét vẫn chạy bình thường.
+- Mail lỗi (mạng, sai mật khẩu...) không làm hỏng lượt quét — chỉ log cảnh báo.
+- Kiểm tra cấu hình: `make test-mail` — nhận được mail thử là đúng.
 
 ## Website
 
