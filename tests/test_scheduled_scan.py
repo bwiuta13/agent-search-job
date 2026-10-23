@@ -684,3 +684,93 @@ class TestIngestHiddenCounts:
         assert res.hidden_stale >= 0
         assert "hidden_expired" in res.to_dict()
         assert res.to_dict()["hidden_expired"] == 1
+
+
+class TestExpiredPurge:
+    """Job quá hạn nộp bị xoá hẳn mỗi EXPIRED_PURGE_HOURS giờ; lượt quét không nạp lại job quá hạn."""
+
+    @staticmethod
+    def _add(store, sid, deadline, active=True):
+        job = normalize_job(make_job(title=f"Content Executive {sid}", company_name=f"Cty {sid}",
+                                     source_job_id=sid, source_url=f"https://example.com/job/{sid}"))
+        job.deadline = deadline
+        jid = store.insert_job(job)
+        if not active:
+            with store.conn:
+                store.conn.execute("UPDATE jobs SET is_active=0 WHERE job_id=?", (jid,))
+        return jid
+
+    def test_purge_deletes_expired_including_saved_and_cache(self):
+        from datetime import datetime
+        from agent_search_job.pipeline.purge_store import purge_expired_jobs
+        from agent_search_job.pipeline.scheduled_scan import VN_TZ
+        store = JobStore(":memory:")
+        now_vn = datetime.now(VN_TZ)
+        expired_shown = self._add(store, "a", now_vn - timedelta(hours=3))  # hạn ghi +07:00, đã qua 3 tiếng
+        self._add(store, "b", now_vn - timedelta(days=2), active=False)
+        expired_saved = self._add(store, "c", now_vn - timedelta(days=1))
+        future = self._add(store, "d", now_vn + timedelta(hours=3))
+        no_deadline = self._add(store, "e", None)
+        with store.conn:
+            store.conn.execute("INSERT INTO users(email, token, created_at) VALUES ('u@x.com', 'tok-u', 'x')")
+            uid = store.conn.execute("SELECT user_id FROM users WHERE email='u@x.com'").fetchone()[0]
+            store.conn.execute("INSERT INTO saved_jobs(user_id, job_id, saved_at) VALUES (?,?,'x')", (uid, expired_saved))
+            store.conn.execute("INSERT INTO llm_enrichment(job_id, model, prompt_version, kind, payload_json, created_at) "
+                               "VALUES (?, 'm', 'v1', 'jd', '{}', 'x')", (expired_shown,))
+
+        assert purge_expired_jobs(store) == {"jobs": 3, "saved_removed": 1, "llm_cache": 1}
+        assert {r[0] for r in store.conn.execute("SELECT job_id FROM jobs")} == {future, no_deadline}
+        assert store.conn.execute("SELECT COUNT(*) FROM saved_jobs").fetchone()[0] == 0
+        assert purge_expired_jobs(store) == {"jobs": 0, "saved_removed": 0, "llm_cache": 0}
+
+    def test_hide_expired_compares_real_time_across_timezones(self):
+        """Hạn "…T(giờ VN − 3h)+07:00" đã qua thật; so chuỗi ISO với giờ UTC sẽ tưởng còn hạn 4 tiếng nữa."""
+        from datetime import datetime
+        from agent_search_job.pipeline.scheduled_scan import VN_TZ
+        store = JobStore(":memory:")
+        now_vn = datetime.now(VN_TZ)
+        expired = self._add(store, "x", now_vn - timedelta(hours=3))
+        future = self._add(store, "y", now_vn + timedelta(hours=3))
+        assert store.mark_expired_inactive()["expired"] == 1
+        active = {r[0] for r in store.conn.execute("SELECT job_id FROM jobs WHERE is_active=1")}
+        assert expired not in active and future in active
+
+    async def test_ingest_skips_expired_jobs(self):
+        from datetime import datetime
+        from agent_search_job.pipeline.ingest import IngestPipeline
+        old_aware = make_job(title="Social Media Executive", company_name="Cty Cũ", source_job_id="o1")
+        old_aware.deadline = utcnow() - timedelta(days=1)
+        old_naive = make_job(title="Copywriter Senior", company_name="Cty Cũ 2", source_job_id="o2")
+        old_naive.deadline = datetime.now() - timedelta(days=2)  # không múi giờ -> coi là giờ VN
+        fresh = make_job(title="Content Executive Mới", company_name="Cty Mới", source_job_id="n1")
+        fresh.deadline = utcnow() + timedelta(days=10)
+        store = JobStore(":memory:")
+        res = await IngestPipeline(store, [FakeAdapter([old_aware, old_naive, fresh])]).run(
+            queries=["content"], max_results_per_query=10)
+        assert (res.inserted, res.expired_skipped) == (1, 2) and res.to_dict()["expired_skipped"] == 2
+        assert [r[0] for r in store.conn.execute("SELECT title FROM jobs")] == ["Content Executive Mới"]
+
+    async def test_purge_loop_runs_and_skips_while_scanning(self, monkeypatch):
+        from agent_search_job.pipeline import purge_store
+        from agent_search_job.pipeline import scheduled_scan as mod
+        from agent_search_job.pipeline.rescan import RescanManager
+        calls = []
+        monkeypatch.setattr(purge_store, "purge_expired_jobs",
+                            lambda s: calls.append(1) or {"jobs": 2, "saved_removed": 0, "llm_cache": 0})
+        async def stop(sec):
+            assert sec == 6 * 3600
+            raise asyncio.CancelledError
+        monkeypatch.setattr(mod.asyncio, "sleep", stop)
+        monkeypatch.setattr(RescanManager, "_task", None)
+        monkeypatch.setattr(RescanManager, "_current", None)
+        monkeypatch.setattr(ScheduledScanManager, "last_expired_purge", None)
+
+        monkeypatch.setattr(ScheduledScanManager, "_running", True)  # đang quét định kỳ -> bỏ lượt
+        with pytest.raises(asyncio.CancelledError):
+            await ScheduledScanManager.purge_expired_loop(JobStore(":memory:"), 6)
+        assert calls == [] and ScheduledScanManager.last_expired_purge is None
+
+        monkeypatch.setattr(ScheduledScanManager, "_running", False)
+        with pytest.raises(asyncio.CancelledError):
+            await ScheduledScanManager.purge_expired_loop(JobStore(":memory:"), 6)
+        assert calls == [1] and ScheduledScanManager.last_expired_purge["jobs"] == 2

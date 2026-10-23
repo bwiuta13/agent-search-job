@@ -62,11 +62,17 @@ async def lifespan(app: FastAPI):
     # vòng lặp quét định kỳ: None nếu SCHEDULED_SCAN_ENABLED != 1 (dùng cron/scripts)
     from ..pipeline.scheduled_scan import ScheduledScanManager
     scan_task = await ScheduledScanManager.start_loop(get_store())
+    # xoá hẳn job quá hạn nộp mỗi EXPIRED_PURGE_HOURS (6) giờ, độc lập với lịch quét
+    purge_hours = int(os.environ.get("EXPIRED_PURGE_HOURS") or 6)
+    purge_task = (asyncio.create_task(ScheduledScanManager.purge_expired_loop(get_store(), purge_hours))
+                  if purge_hours > 0 else None)
 
     yield
     task.cancel()
     if scan_task is not None:
         scan_task.cancel()
+    if purge_task is not None:
+        purge_task.cancel()
 
 
 app = FastAPI(title="Agent Search Job", version="0.1.0", docs_url=None, redoc_url=None,

@@ -366,8 +366,8 @@ class JobStore:
         now = now or utcnow()
         with self.conn:
             expired = self.conn.execute(
-                "UPDATE jobs SET is_active=0 WHERE is_active=1 AND deadline IS NOT NULL "
-                "AND deadline < ?", (now.isoformat(),),
+                "UPDATE jobs SET is_active=0 WHERE is_active=1 AND deadline IS NOT NULL AND deadline != '' "
+                "AND julianday(deadline) < julianday(?)", (now.isoformat(),),  # julianday: đúng cả khi khác múi giờ
             ).rowcount
             stale = 0
             if stale_days > 0 and stale_sources:

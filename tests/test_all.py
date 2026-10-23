@@ -781,6 +781,7 @@ class TestCareerViet:
             "Chuyên viên Content Marketing", "Công ty cổ phần Lữ hành Vietluxtour", "Cạnh tranh", "Hồ Chí Minh")
         assert lux.source_url == "https://careerviet.vn/vi/tim-viec-lam/chuyen-vien-content-marketing.35C8A83A.html"
         assert lux.deadline.date().isoformat() == "2026-11-13" and lux.role_cluster == "content_marketing"
+        assert (lux.deadline.hour, lux.deadline.utcoffset().total_seconds()) == (23, 7 * 3600)  # hết ngày hạn, giờ VN
         assert ce.title == "Content Executive & SEO" and (ce.salary_min_vnd, ce.salary_max_vnd) == (15_000_000, 20_000_000)
         one = [j async for j in cv.CareerVietAdapter().discover(DiscoverInput(query="content marketing", max_results=1))]
         assert len(one) == 1

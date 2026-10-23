@@ -8,7 +8,7 @@ Link việc: /vi/tim-viec-lam/<slug>.<mã hex>.html (bản cũ /viec-lam/<slug>-
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import AsyncIterator
 
 import httpx
@@ -71,8 +71,8 @@ class CareerVietAdapter(JobSourceAdapter):
                 city="Hồ Chí Minh",
                 address=address or "Hồ Chí Minh",
                 is_hcm=True,
-                deadline=(datetime(int(deadline.group(3)), int(deadline.group(2)), int(deadline.group(1)),
-                                   tzinfo=timezone.utc) if deadline else None),
+                deadline=(datetime(int(deadline.group(3)), int(deadline.group(2)), int(deadline.group(1)), 23, 59, 59,
+                                   tzinfo=timezone(timedelta(hours=7))) if deadline else None),  # hết ngày hạn nộp, giờ VN
                 apply_url=f"{self.base}{href}",
                 source=self.name,
                 source_url=f"{self.base}{href}",

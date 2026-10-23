@@ -41,6 +41,8 @@ services:
       SCAN_INTERVAL_HOURS: "${SCAN_INTERVAL_HOURS-12}"
       SCAN_ON_STARTUP: "${SCAN_ON_STARTUP-0}"
       SCAN_DELETE_AFTER_DAYS: "${SCAN_DELETE_AFTER_DAYS-3}"
+      # xoá hẳn job quá hạn nộp mỗi N giờ (0 = tắt)
+      EXPIRED_PURGE_HOURS: "${EXPIRED_PURGE_HOURS-6}"
       SCAN_JD_DETAILS: "${SCAN_JD_DETAILS-1}"
       SCAN_LINKEDIN: "${SCAN_LINKEDIN-1}"
       SITE_URL: "${SITE_URL-}"

@@ -310,6 +310,7 @@ class ScheduledScanManager:
     _task: Optional[asyncio.Task] = None
     _running: bool = False
     last_result: Optional[ScanResult] = None
+    last_expired_purge: Optional[dict] = None
 
     @classmethod
     def running(cls) -> bool:
@@ -324,6 +325,8 @@ class ScheduledScanManager:
             "next_run_at": next_scan_at().isoformat() if scheduled_enabled() else None,
             "running": cls._running,
             "last": cls.last_result.to_dict() if cls.last_result else None,
+            "expired_purge_hours": int(os.environ.get("EXPIRED_PURGE_HOURS") or 6),
+            "last_expired_purge": cls.last_expired_purge,
         }
 
     @classmethod
@@ -349,6 +352,23 @@ class ScheduledScanManager:
             log.info("Lượt quét định kỳ kế tiếp: %s (giờ Việt Nam)", nxt.strftime("%H:%M %d/%m/%Y"))
             await asyncio.sleep(max(1.0, (nxt - datetime.now(VN_TZ)).total_seconds()))
             await cls._run_once(store)
+
+    @classmethod
+    async def purge_expired_loop(cls, store: JobStore, hours: int):
+        """Mỗi `hours` giờ (chạy ngay lượt đầu) xoá hẳn job đã quá hạn nộp. Đang có lượt quét (định kỳ hoặc
+        "Quét ngay") thì bỏ lượt này: quét đang ghi job, xoá chen vào giữa thì job vừa cập nhật có thể biến mất."""
+        from .purge_store import purge_expired_jobs
+        from .rescan import RescanManager
+        while True:
+            if cls._running or RescanManager.status().running:
+                log.info("Đang quét — bỏ lượt xoá job quá hạn, thử lại sau %d giờ", hours)
+            else:
+                try:
+                    cls.last_expired_purge = {"at": utcnow().isoformat(), **purge_expired_jobs(store)}
+                except Exception as e:  # noqa: BLE001 - lỗi xoá không được làm chết vòng lặp
+                    log.error("Xoá job quá hạn lỗi: %s: %s", type(e).__name__, e)
+                    cls.last_expired_purge = {"at": utcnow().isoformat(), "error": f"{type(e).__name__}: {e}"}
+            await asyncio.sleep(hours * 3600)
 
     @classmethod
     async def _run_once(cls, store: JobStore):

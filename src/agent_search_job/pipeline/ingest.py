@@ -9,7 +9,7 @@ import asyncio
 import logging
 import os
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import timedelta, timezone
 from typing import Optional
 
 from ..domain.models import NormalizedJob, RoleCluster, SourceName, utcnow
@@ -152,6 +152,8 @@ class CrawlRunResult:
     # số job bị ẩn (is_active=0) cuối lượt quét: hết hạn nộp + N ngày không thấy lại
     hidden_expired: int = 0
     hidden_stale: int = 0
+    # job nguồn còn đăng nhưng đã quá hạn nộp -> bỏ, không lưu (job quá hạn bị xoá hẳn mỗi 6 giờ)
+    expired_skipped: int = 0
     # job_id của các job MỚI insert trong lượt này (mail job mới sau lượt quét định kỳ)
     inserted_job_ids: list[int] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
@@ -169,6 +171,7 @@ class CrawlRunResult:
             "out_of_hcm": self.out_of_hcm,
             "hidden_expired": self.hidden_expired,
             "hidden_stale": self.hidden_stale,
+            "expired_skipped": self.expired_skipped,
             "errors": self.errors,
             "health": [
                 {
@@ -280,6 +283,14 @@ class IngestPipeline:
         before_hcm = len(raw_jobs)
         raw_jobs = [j for j in raw_jobs if self._is_hcm(j)]
         result.out_of_hcm = before_hcm - len(raw_jobs)
+
+        # 3b) bỏ job đã quá hạn nộp: chúng bị xoá hẳn mỗi EXPIRED_PURGE_HOURS giờ, lưu lại sẽ thành "việc mới"
+        # giả trong mail mỗi lượt quét. Hạn nộp không kèm múi giờ coi là giờ Việt Nam.
+        now = utcnow()
+        before_expired = len(raw_jobs)
+        raw_jobs = [j for j in raw_jobs if not j.deadline or (
+            j.deadline if j.deadline.tzinfo else j.deadline.replace(tzinfo=timezone(timedelta(hours=7)))) >= now]
+        result.expired_skipped = before_expired - len(raw_jobs)
 
         # 3) dedupe + upsert (idempotent: cùng dedupe_key -> update, không insert mới)
         seen_keys: dict[str, int] = {}

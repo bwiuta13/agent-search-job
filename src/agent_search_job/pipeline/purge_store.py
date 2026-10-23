@@ -68,6 +68,29 @@ def purge_stale_data(store: JobStore, hidden_days: int = 3,
     return report
 
 
+def purge_expired_jobs(store: JobStore) -> dict:
+    """Xoá hẳn khỏi DB mọi job đã quá hạn nộp (deadline < bây giờ) — cả job đang hiện lẫn đã ẩn, kể cả job
+    có người lưu (xoá luôn dòng "đã lưu") + cache AI của job đó. Chạy mỗi EXPIRED_PURGE_HOURS giờ.
+
+    So bằng julianday(): deadline lưu kèm múi giờ ("2026-10-22T23:59:59+07:00"), so chuỗi ISO trực tiếp sẽ
+    lệch tới 7 tiếng. Không backup: chỉ xoá dữ liệu đã hết hạn, nguồn còn đăng thì lượt quét sau không nạp
+    lại (ingest bỏ job quá hạn). Trả {"jobs": N, "saved_removed": N, "llm_cache": N}.
+    """
+    conn = store.conn
+    ids = [r[0] for r in conn.execute(
+        "SELECT job_id FROM jobs WHERE deadline IS NOT NULL AND deadline != '' "
+        "AND julianday(deadline) < julianday('now')")]
+    if not ids:
+        return {"jobs": 0, "saved_removed": 0, "llm_cache": 0}
+    marks = ",".join("?" * len(ids))
+    with conn:
+        saved = conn.execute(f"DELETE FROM saved_jobs WHERE job_id IN ({marks})", ids).rowcount
+        cache = conn.execute(f"DELETE FROM llm_enrichment WHERE job_id IN ({marks})", ids).rowcount
+        conn.execute(f"DELETE FROM jobs WHERE job_id IN ({marks})", ids)
+    log.info("Đã xoá %d job quá hạn nộp (+%d lượt lưu, %d cache AI)", len(ids), saved, cache)
+    return {"jobs": len(ids), "saved_removed": saved, "llm_cache": cache}
+
+
 def _backup(conn: sqlite3.Connection, store: JobStore, now: datetime) -> Path:
     """Backup DB hiện tại vào <thư mục DB>/backups/ (SQLite backup API: gồm cả WAL)."""
     db_path = getattr(store, "db_path", "data/jobs.db")

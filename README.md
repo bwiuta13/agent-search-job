@@ -155,6 +155,7 @@ SCAN_TIMES=08:00,20:00        # quét + mail đúng 8h sáng và 8h tối (giờ
 SCAN_INTERVAL_HOURS=12        # chỉ dùng khi bỏ trống SCAN_TIMES: mỗi N tiếng 1 lượt
 SCAN_ON_STARTUP=0             # 1 = quét thêm 1 lượt ngay khi khởi động server (mỗi lần deploy)
 SCAN_DELETE_AFTER_DAYS=3      # xoá hẳn job đã ẩn quá 3 ngày
+EXPIRED_PURGE_HOURS=6         # xoá hẳn job đã quá hạn nộp mỗi 6 giờ (kể cả job có người lưu); 0 = tắt
 SITE_URL=https://your-domain  # link web trong mail (đặt khi chạy sau Nginx)
 ```
 
@@ -164,6 +165,8 @@ Hoặc chạy bằng cron ngoài (server không chạy web):
 CRON_TZ=Asia/Ho_Chi_Minh
 0 8,20 * * * cd /path/to/agent-search-job && python3 scripts/scheduled_scan.py >> data/scheduled-scan.log 2>&1
 ```
+
+Job đã quá hạn nộp bị **xoá hẳn khỏi DB mỗi `EXPIRED_PURGE_HOURS` (6) giờ** (chạy ngay khi server khởi động, bỏ lượt nếu đang quét), kèm dòng "đã lưu" và cache AI của job đó; lượt quét cũng bỏ qua job nguồn còn đăng nhưng đã quá hạn, nên chúng không quay lại và không bị tính là "việc mới". Hạn nộp so theo thời điểm thật (`julianday`, đúng cả khi lưu kèm múi giờ +07:00).
 
 Mail đến sau khi lượt quét xong (thường 15–25 phút sau mốc giờ). Lượt kế tiếp xem ở `next_run_at` trong `/api/scheduled-scan/status`.
 
