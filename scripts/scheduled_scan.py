@@ -3,15 +3,16 @@
 hoặc không còn tuyển -> gửi mail job mới.
 
 Dùng cho cron / Compose / systemd-timer khi không bật vòng lặp trong server
-(SCHEDULED_SCAN_ENABLED). Lịch quét định kỳ 12 tiếng một trong hai cách:
+(SCHEDULED_SCAN_ENABLED). Lịch quét định kỳ (8h sáng, 8h tối giờ Việt Nam) một trong hai cách:
 
 1) Trong server web (khuyên dùng, một tiến trình duy nhất):
-   .env:  SCHEDULED_SCAN_ENABLED=1  SCAN_INTERVAL_HOURS=12
+   .env:  SCHEDULED_SCAN_ENABLED=1  SCAN_TIMES=08:00,20:00  SCAN_ON_STARTUP=0
    -> vòng lặp chạy trong lifespan FastAPI (kèm web + MCP).
 
 2) Cron ngoài (server không chạy web):
    crontab -e
-   0 */12 * * * cd /path/to/agent-search-job && python3 scripts/scheduled_scan.py >> data/scheduled-scan.log 2>&1
+   CRON_TZ=Asia/Ho_Chi_Minh
+   0 8,20 * * * cd /path/to/agent-search-job && python3 scripts/scheduled_scan.py >> data/scheduled-scan.log 2>&1
 
 Usage:
     python scripts/scheduled_scan.py                    # chạy 1 lượt (mặc định)

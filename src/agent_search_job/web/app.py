@@ -45,7 +45,7 @@ async def lifespan(app: FastAPI):
     """Dọn hội thoại trợ lý AI quá hạn khi khởi động và mỗi giờ — chat bị xoá sau TTL kể cả
     khi không ai gọi API (dữ liệu không nằm lại trong DB quá 24 giờ + tối đa 1 giờ).
     Quét định kỳ (SCHEDULED_SCAN_ENABLED=1): quét nguồn -> xoá job hết hạn/ngừng
-    tuyển -> gửi mail job mới, mỗi SCAN_INTERVAL_HOURS (12) giờ."""
+    tuyển -> gửi mail job mới, đúng các mốc SCAN_TIMES (08:00, 20:00 giờ Việt Nam)."""
     ttl = int(os.environ.get("ASSISTANT_CHAT_TTL_HOURS") or 24)
     get_store().purge_expired_chat(ttl)
 

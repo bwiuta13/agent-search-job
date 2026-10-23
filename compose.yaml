@@ -36,8 +36,10 @@ services:
       CRAWL_RUNS_KEEP_DAYS: "${CRAWL_RUNS_KEEP_DAYS-90}"
       # Quét định kỳ (mặc định 12h): quét nguồn -> xoá job hết hạn/không còn tuyển -> mail job mới
       SCHEDULED_SCAN_ENABLED: "${SCHEDULED_SCAN_ENABLED-1}"
+      # quét + gửi mail đúng 8h sáng và 8h tối giờ Việt Nam; bỏ trống SCAN_TIMES -> mỗi SCAN_INTERVAL_HOURS giờ
+      SCAN_TIMES: "${SCAN_TIMES-08:00,20:00}"
       SCAN_INTERVAL_HOURS: "${SCAN_INTERVAL_HOURS-12}"
-      SCAN_ON_STARTUP: "${SCAN_ON_STARTUP-1}"
+      SCAN_ON_STARTUP: "${SCAN_ON_STARTUP-0}"
       SCAN_DELETE_AFTER_DAYS: "${SCAN_DELETE_AFTER_DAYS-3}"
       SCAN_JD_DETAILS: "${SCAN_JD_DETAILS-1}"
       SCAN_LINKEDIN: "${SCAN_LINKEDIN-1}"

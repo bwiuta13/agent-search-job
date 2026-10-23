@@ -506,6 +506,51 @@ class TestScheduledScanConfig:
         monkeypatch.delenv("SCHEDULED_SCAN_ENABLED")
         assert scheduled_enabled() is False
 
+    def test_next_scan_at_fixed_times_vn(self, monkeypatch):
+        """SCAN_TIMES=08:00,20:00: quét đúng 8h sáng / 8h tối giờ Việt Nam, đúng mốc thì lấy mốc sau."""
+        from datetime import datetime, timedelta, timezone
+        from agent_search_job.pipeline.scheduled_scan import VN_TZ, next_scan_at
+        monkeypatch.setenv("SCAN_TIMES", "08:00, 20:00")
+        vn = lambda d, h, m=0: datetime(2026, 10, d, h, m, tzinfo=VN_TZ)
+        assert next_scan_at(vn(23, 7, 30)) == vn(23, 8)
+        assert next_scan_at(vn(23, 8)) == vn(23, 20)          # đúng 8:00 (vừa chạy) -> 20:00
+        assert next_scan_at(vn(23, 8, 20)) == vn(23, 20)
+        assert next_scan_at(vn(23, 21)) == vn(24, 8)          # sau 20h -> 8h sáng hôm sau
+        # server chạy giờ UTC: 01:00Z = 08:00 VN -> mốc kế là 20:00 VN
+        assert next_scan_at(datetime(2026, 10, 23, 1, 0, tzinfo=timezone.utc)) == vn(23, 20)
+        monkeypatch.setenv("SCAN_TIMES", "8:00")
+        assert next_scan_at(vn(23, 9)) == vn(24, 8)
+
+    def test_next_scan_at_falls_back_to_interval(self, monkeypatch):
+        """Không có / sai định dạng SCAN_TIMES -> mỗi SCAN_INTERVAL_HOURS giờ như cũ."""
+        from datetime import datetime, timedelta
+        from agent_search_job.pipeline.scheduled_scan import VN_TZ, next_scan_at
+        now = datetime(2026, 10, 23, 10, 0, tzinfo=VN_TZ)
+        monkeypatch.setenv("SCAN_INTERVAL_HOURS", "12")
+        for times in ("", "25:00,abc", "8h"):
+            monkeypatch.setenv("SCAN_TIMES", times)
+            assert next_scan_at(now) == now + timedelta(hours=12), times
+
+    async def test_loop_sleeps_until_next_slot_without_startup_scan(self, monkeypatch):
+        """SCAN_ON_STARTUP=0 + SCAN_TIMES: không quét lúc khởi động, ngủ tới đúng mốc kế tiếp rồi mới quét."""
+        import asyncio
+        from datetime import datetime
+        from agent_search_job.pipeline import scheduled_scan as mod
+        monkeypatch.setenv("SCAN_TIMES", "08:00,20:00")
+        monkeypatch.setenv("SCAN_ON_STARTUP", "0")
+        runs, sleeps = [], []
+        async def fake_scan(store, with_details=True):
+            runs.append(1)
+        async def fake_sleep(sec):
+            sleeps.append(sec)
+            raise asyncio.CancelledError
+        monkeypatch.setattr(mod, "run_scheduled_scan", fake_scan)
+        monkeypatch.setattr(mod.asyncio, "sleep", fake_sleep)
+        with pytest.raises(asyncio.CancelledError):
+            await ScheduledScanManager._loop(JobStore(":memory:"))
+        expect = (mod.next_scan_at() - datetime.now(mod.VN_TZ)).total_seconds()
+        assert runs == [] and len(sleeps) == 1 and abs(sleeps[0] - expect) < 5 and 0 < sleeps[0] <= 12 * 3600
+
     async def test_manager_loop_disabled(self, monkeypatch):
         """SCHEDULED_SCAN_ENABLED!=1 -> start_loop trả None (không tạo task)."""
         monkeypatch.setenv("SCHEDULED_SCAN_ENABLED", "0")

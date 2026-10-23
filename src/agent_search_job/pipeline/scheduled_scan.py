@@ -12,8 +12,8 @@ Trách nhiệm một lượt scan (run_scheduled_scan):
 
 Vòng lặp định kỳ (ScheduledScanManager):
 - SCHEDULED_SCAN_ENABLED=1 bật vòng lặp chạy trong tiến trình server web
-  (lifespan FastAPI, mỗi SCAN_INTERVAL_HOURS=12 giờ, mặc định chạy ngay lúc
-  khởi động).
+  (lifespan FastAPI): quét đúng các mốc SCAN_TIMES theo giờ Việt Nam (vd 08:00,20:00), không đặt thì
+  mỗi SCAN_INTERVAL_HOURS=12 giờ; SCAN_ON_STARTUP=1 quét thêm 1 lượt ngay lúc khởi động.
 - Không chồng chéo: lượt trước chưa xong thì lượt định kỳ tới bị bỏ qua; đang "Quét ngay" trên web thì
   lượt định kỳ chờ nó xong rồi mới chạy, còn trong lúc quét định kỳ thì "Quét ngay" báo bận (RescanManager).
 - scripts/scheduled_scan.py chạy một lượt rồi thoát (cron/Compose không cần
@@ -28,7 +28,9 @@ import asyncio
 import json
 import logging
 import os
+import re
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from ..domain.models import utcnow
@@ -37,6 +39,7 @@ from ..storage.store import JobStore
 log = logging.getLogger("pipeline.scheduled_scan")
 
 DEFAULT_INTERVAL_HOURS = 12
+VN_TZ = timezone(timedelta(hours=7))  # giờ Việt Nam (không đổi giờ mùa hè) - lịch không phụ thuộc TZ của server
 
 
 def interval_hours() -> int:
@@ -45,6 +48,18 @@ def interval_hours() -> int:
     except ValueError:
         v = DEFAULT_INTERVAL_HOURS
     return max(1, v)
+
+
+def next_scan_at(now: Optional[datetime] = None) -> datetime:
+    """Lượt quét kế tiếp (giờ Việt Nam): mốc giờ cố định trong SCAN_TIMES (vd "08:00,20:00" -> mail 8h sáng
+    và 8h tối) nếu có, không thì sau SCAN_INTERVAL_HOURS giờ tính từ bây giờ. Mốc sai định dạng bị bỏ qua."""
+    now = (now or datetime.now(VN_TZ)).astimezone(VN_TZ)
+    slots = [(int(h), int(m)) for h, m in re.findall(r"\b([01]?\d|2[0-3]):([0-5]\d)\b",
+                                                      os.environ.get("SCAN_TIMES", ""))]
+    if not slots:
+        return now + timedelta(hours=interval_hours())
+    return min(at for at in ((now + timedelta(days=d)).replace(hour=h, minute=m, second=0, microsecond=0)
+                             for d in (0, 1) for h, m in slots) if at > now)
 
 
 def scheduled_enabled() -> bool:
@@ -305,6 +320,8 @@ class ScheduledScanManager:
         return {
             "enabled": scheduled_enabled(),
             "interval_hours": interval_hours(),
+            "scan_times": os.environ.get("SCAN_TIMES", "").strip(),
+            "next_run_at": next_scan_at().isoformat() if scheduled_enabled() else None,
             "running": cls._running,
             "last": cls.last_result.to_dict() if cls.last_result else None,
         }
@@ -322,15 +339,16 @@ class ScheduledScanManager:
 
     @classmethod
     async def _loop(cls, store: JobStore):
-        hours = interval_hours()
-        log.info("Quét định kỳ bật: mỗi %d giờ (+ chạy ngay 1 lượt lúc khởi động)", hours)
-        # chạy ngay 1 lượt lúc khởi động? SCAN_ON_STARTUP=0 để chỉ chạy theo lịch
-        if os.environ.get("SCAN_ON_STARTUP", "1").strip().lower() in ("0", "false", "no", "off"):
-            log.info("Bỏ lượt quét lúc khởi động (SCAN_ON_STARTUP=0) — lượt đầu sau %d giờ", hours)
-            await asyncio.sleep(hours * 3600)
-        while True:
+        times = os.environ.get("SCAN_TIMES", "").strip()
+        log.info("Quét định kỳ bật: %s", f"lúc {times} (giờ Việt Nam)" if times else f"mỗi {interval_hours()} giờ")
+        # SCAN_ON_STARTUP=0: chỉ quét (và gửi mail) đúng lịch, không quét mỗi lần deploy/khởi động lại
+        if os.environ.get("SCAN_ON_STARTUP", "1").strip().lower() not in ("0", "false", "no", "off"):
             await cls._run_once(store)
-            await asyncio.sleep(hours * 3600)
+        while True:
+            nxt = next_scan_at()
+            log.info("Lượt quét định kỳ kế tiếp: %s (giờ Việt Nam)", nxt.strftime("%H:%M %d/%m/%Y"))
+            await asyncio.sleep(max(1.0, (nxt - datetime.now(VN_TZ)).total_seconds()))
+            await cls._run_once(store)
 
     @classmethod
     async def _run_once(cls, store: JobStore):

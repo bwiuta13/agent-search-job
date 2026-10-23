@@ -138,21 +138,22 @@ sqlite3 data/jobs.db "UPDATE users SET token='$(python3 -c 'import secrets;print
 - Cuối mỗi lần quét: job quá hạn nộp và job `JOB_STALE_DAYS` (30) ngày không thấy lại trên nguồn vừa quét bị ẩn (`is_active=0`, vẫn còn trong DB).
 - `make purge-dry-run`: xem trước số dòng sẽ xoá. `make purge`: backup vào `data/backups/` rồi xoá job đã ẩn quá `JOB_PURGE_AFTER_DAYS` (90) ngày (trừ job có người lưu) kèm cache AI, xoá `crawl_runs` cũ hơn `CRAWL_RUNS_KEEP_DAYS` (90) ngày, rồi `VACUUM`. Công ty + feedback giữ nguyên.
 
-## Quét định kỳ tự động (12 tiếng) + mail job mới
+## Quét định kỳ tự động (8h sáng, 8h tối) + mail job mới
 
 Một lượt quét định kỳ làm đủ 3 việc: **quét mọi nguồn → xoá job chết → gửi mail job mới**:
 
 1. Crawl đầy đủ `DEFAULT_QUERIES` trên mọi nguồn (VietnamWorks, LinkedIn, ITviec, CareerViet, TopDev, VNG) + fetch JD chi tiết — cùng pipeline với nút "Quét ngay" trên web.
 2. Cuối lượt quét, job hết hạn nộp + job `JOB_STALE_DAYS` ngày không thấy lại trên nguồn bị **ẩn** (`is_active=0`); job đã ẩn quá `SCAN_DELETE_AFTER_DAYS` (3) ngày bị **xoá hẳn** kèm cache AI (backup DB vào `data/backups/` trước khi xoá; job có người lưu được giữ).
-3. Nếu có job mới và đã cấu hình SMTP: gửi mail **"N việc làm mới"** tới `MAIL_TO` (danh sách job kèm link trang việc, lương, quận; tối đa `NEW_JOB_MAIL_MAX` job mỗi mail).
+3. Nếu có job mới và đã cấu hình SMTP: gửi mail **"Công chúa ơi, nay em tìm được N jobs mới nè"** (template hồng có thỏ 2D) tới `MAIL_TO` (danh sách job kèm link trang việc, lương, quận; tối đa `NEW_JOB_MAIL_MAX` job mỗi mail).
 
 Bật vòng lặp trong server (khuyên dùng — chỉ 1 tiến trình, lịch luôn đúng kể cả restart):
 
 ```bash
 # .env
 SCHEDULED_SCAN_ENABLED=1      # bật vòng lặp trong tiến trình server
-SCAN_INTERVAL_HOURS=12        # mỗi 12 tiếng 1 lượt
-SCAN_ON_STARTUP=1             # chạy ngay 1 lượt khi khởi động server
+SCAN_TIMES=08:00,20:00        # quét + mail đúng 8h sáng và 8h tối (giờ Việt Nam, không phụ thuộc TZ server)
+SCAN_INTERVAL_HOURS=12        # chỉ dùng khi bỏ trống SCAN_TIMES: mỗi N tiếng 1 lượt
+SCAN_ON_STARTUP=0             # 1 = quét thêm 1 lượt ngay khi khởi động server (mỗi lần deploy)
 SCAN_DELETE_AFTER_DAYS=3      # xoá hẳn job đã ẩn quá 3 ngày
 SITE_URL=https://your-domain  # link web trong mail (đặt khi chạy sau Nginx)
 ```
@@ -160,8 +161,11 @@ SITE_URL=https://your-domain  # link web trong mail (đặt khi chạy sau Nginx
 Hoặc chạy bằng cron ngoài (server không chạy web):
 
 ```bash
-0 */12 * * * cd /path/to/agent-search-job && python3 scripts/scheduled_scan.py >> data/scheduled-scan.log 2>&1
+CRON_TZ=Asia/Ho_Chi_Minh
+0 8,20 * * * cd /path/to/agent-search-job && python3 scripts/scheduled_scan.py >> data/scheduled-scan.log 2>&1
 ```
+
+Mail đến sau khi lượt quét xong (thường 15–25 phút sau mốc giờ). Lượt kế tiếp xem ở `next_run_at` trong `/api/scheduled-scan/status`.
 
 Lệnh hữu ích:
 
