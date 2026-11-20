@@ -21,6 +21,7 @@
     </h3>
     <p class="company">{{ j.company_name }}</p>
     <div class="badges">
+      {% if j.saturday_off %}<span class="badge green">{{ icon('clock') }}Nghỉ T7</span>{% elif j.saturday_off == false %}<span class="badge gray">{{ icon('clock') }}Có làm T7</span>{% endif %}
       <span class="badge">{{ role_label(j.role_cluster) }}</span>
       {% if j.district %}<span class="badge gray">{{ icon('map-pin') }}{{ j.district }}</span>{% endif %}
       {% if j.job_level %}<span class="badge gray">{{ level_label(j.job_level.split(',')[0]) }}{% if j.job_level.count(',') %}+{% endif %}</span>{% endif %}

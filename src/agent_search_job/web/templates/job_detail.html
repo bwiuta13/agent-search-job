@@ -15,6 +15,7 @@
       {% if job.experience_years_min is not none %}<span>{{ icon('briefcase') }}Kinh nghiệm {{ job.experience_years_min }}{% if job.experience_years_max %}–{{ job.experience_years_max }}{% endif %} năm</span>{% endif %}
     </div>
     <div class="badges" style="margin-top:14px">
+      {% if job.saturday_off %}<span class="badge green">{{ icon('clock') }}Nghỉ T7</span>{% elif job.saturday_off == false %}<span class="badge gray">{{ icon('clock') }}Có làm T7</span>{% endif %}
       <span class="badge">{{ job.role_cluster }}</span>
       <span class="badge lilac">{{ icon('layers') }}nguồn: {{ job.source }}</span>
       {% if job.portfolio_required %}<span class="badge">{{ icon('palette') }}cần portfolio</span>{% endif %}

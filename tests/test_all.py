@@ -171,6 +171,34 @@ class TestNormalizeJob:
         assert store.find_by_dedupe_key(key) == jid
         assert store.get_job(jid)["title"] == "Social Media Leader | AI & AUTOMATION"
 
+    @pytest.mark.parametrize("text,expected", [
+        # nghỉ T7
+        ("Thời gian làm việc: T2-T6 (8:00-17:30)", True),
+        ("Working Days: Thứ 2 – Thứ 6 (3 giờ/ngày)", True),
+        ("Ngày làm việc: Thứ Hai – Thứ Sáu. Giờ làm việc: 07:00–16:00", True),
+        ("5-day working per week (Monday to Friday)", True),
+        ("Nghỉ Thứ 7, Chủ nhật, lễ Tết theo quy định", True),
+        ("Không làm thứ 7 và chủ nhật", True),
+        ("Thứ 2 - Thứ 6, nghỉ 2 thứ Bảy và Chủ nhật", True),
+        # có làm T7 (kể cả nửa buổi, cách tuần, online)
+        ("Thứ 2 – Thứ 6: 08:30 – 18:00 • Thứ 7: 08:30 – 12:00", False),
+        ("Monday – Friday: 8:00 AM – 5:30 PM Saturday: 8:00 AM – 12:00 PM", False),
+        ("Từ thứ 2 đến thứ sáu: 8h30 - 17h30 - Thứ 7 làm buổi sáng", False),
+        ("8h30 - 17h30 từ T2 - T7 (Nghỉ 02 T7 mỗi tháng)", False),
+        ("Internship Duration: 3 months, Monday - Saturday morning", False),
+        ("08h00 - 17h00, từ Thứ 2 đến hết buổi sáng Thứ 7", False),
+        ("Thứ 2 - Thứ 6: 08:00 - 17:30. Thứ 7: Làm việc online tại nhà", False),
+        ("Thứ 7 làm cách tuần", False),
+        # JD không ghi lịch
+        ("Làm content TikTok, Facebook. Dùng Canva, CapCut.", None),
+    ])
+    def test_saturday_off(self, text, expected):
+        assert normalize_job(make_job(description=text)).saturday_off is expected
+
+    def test_saturday_off_from_benefits(self):
+        job = normalize_job(make_job(benefits=["Làm việc 5 ngày/tuần, nghỉ T7 CN"]))
+        assert job.saturday_off is True
+
 
 # ---------------------------------------------------------------------------
 # Storage tests
@@ -184,6 +212,35 @@ class TestStore:
         res = store.search_jobs(query="content")
         assert res["total_estimate"] >= 1
         assert any(i["job_id"] == jid for i in res["items"])
+
+    def test_search_ranks_saturday_off_first(self):
+        store = JobStore(":memory:")
+        sat = store.insert_job(normalize_job(make_job(
+            title="Content Sat", description="Thứ 2 - Thứ 6, Thứ 7: 8h-12h")))
+        off = store.insert_job(normalize_job(make_job(
+            title="Content Off", description="Làm việc Thứ 2 - Thứ 6")))
+        unknown = store.insert_job(normalize_job(make_job(title="Content Unknown")))
+        items = store.search_jobs(page_size=10)["items"]
+        assert [i["job_id"] for i in items] == [off, unknown, sat]
+        assert [i["saturday_off"] for i in items] == [True, None, False]
+
+    def test_update_keeps_saturday_off_when_new_crawl_has_no_jd(self):
+        store = JobStore(":memory:")
+        jid = store.insert_job(normalize_job(make_job(description="Thứ 2 - Thứ 6")))
+        store.update_job(jid, normalize_job(make_job(description="")))
+        assert store.get_job(jid)["saturday_off"] is True
+        store.update_job(jid, normalize_job(make_job(description="T2 - T7")))
+        assert store.get_job(jid)["saturday_off"] is False
+
+    def test_migrate_backfills_saturday_off_on_old_db(self, tmp_path):
+        db = str(tmp_path / "old.db")
+        store = JobStore(db)
+        jid = store.insert_job(normalize_job(make_job(benefits=["Monday to Friday"])))
+        # giả lập DB cũ chưa có cột saturday_off
+        with store.conn:
+            store.conn.execute("ALTER TABLE jobs DROP COLUMN saturday_off")
+        store.conn.close()
+        assert JobStore(db).get_job(jid)["saturday_off"] is True
 
     def test_dedupe_idempotent(self):
         store = JobStore(":memory:")

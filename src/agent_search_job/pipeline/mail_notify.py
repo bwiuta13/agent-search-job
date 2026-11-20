@@ -93,6 +93,7 @@ def render_new_jobs_email(jobs: list[dict], scan_summary: dict,
         link = (f"{site_url}/jobs/{j['job_id']}" if site_url
                 else (j.get("apply_url") or j.get("source_url") or "").strip())
         tags = [t for t in (
+            "🌿 Nghỉ T7" if j.get("saturday_off") else "",
             JOB_LEVEL_LABELS_VI.get(j.get("job_level") or "", ""),
             f"📍 {j['district']}" if j.get("district") else "",
             ROLE_CLUSTER_LABELS_VI.get(j.get("role_cluster") or "", j.get("role_cluster") or ""),

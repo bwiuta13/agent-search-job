@@ -271,9 +271,9 @@ def _jobs_by_ids(store: JobStore, job_ids: list[int], limit: int = 50) -> list[d
     rows = store.conn.execute(
         f"""SELECT job_id, title, company_name, salary_text, salary_min_vnd,
                    salary_max_vnd, district, role_cluster, job_level,
-                   apply_url, source_url, first_seen_at
+                   apply_url, source_url, first_seen_at, saturday_off
             FROM jobs WHERE job_id IN ({qs}) AND is_active=1
-            ORDER BY job_id DESC""",
+            ORDER BY CASE saturday_off WHEN 1 THEN 0 WHEN 0 THEN 2 ELSE 1 END, job_id DESC""",
         ids,
     ).fetchall()
     return [dict(r) for r in rows]

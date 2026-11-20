@@ -230,6 +230,38 @@ def detect_portfolio_required(text: str) -> Optional[bool]:
     return True
 
 
+# Lịch làm việc thứ 7 (từ JD/quyền lợi). Ví dụ thật trong dữ liệu:
+#   làm T7:  "Thứ 2 – Thứ 6: 08:30–18:00 • Thứ 7: 08:30–12:00", "T2 - T7 (Nghỉ 02 T7 mỗi tháng)",
+#            "Monday - Saturday morning", "Thứ 7 làm cách tuần", "đến hết buổi sáng Thứ 7"
+#   nghỉ T7: "Thứ 2 - Thứ 6", "Monday to Friday", "5-day working per week", "Nghỉ Thứ 7, Chủ nhật"
+_SAT = r"(?:th[ứu]\s*(?:7|b[ảa]y)|\bt7\b|saturday|\bsat\b)"
+_MON = r"(?:th[ứu]\s*(?:2|hai)|\bt2\b|monday|\bmon\b)"
+_TO = r"\s*(?:[-–—~]|đến|tới|to|through)\s*"
+_SAT_OFF_RE = re.compile(
+    rf"(?:không\s*làm\s*(?:việc\s*)?(?:vào\s*)?|nghỉ\s*(?:cả\s*|các\s*ngày\s*)?){_SAT}"
+    rf"|nghỉ\s*(?:cả\s*)?cuối\s*tuần|weekends?\s*off|off\s*(?:on\s*)?weekends?|{_SAT}\s*(?:and\s*sunday\s*)?off")
+_SAT_WORK_RE = re.compile(
+    rf"{_MON}{_TO}(?:hết\s*)?(?:buổi\s*)?(?:sáng\s*)?{_SAT}"
+    rf"|{_SAT}\s*[:\-–(]?\s*(?:làm|buổi|sáng|nửa|half|full|morning|\d{{1,2}}\s*(?:[:h]|am|giờ))"
+    rf"|làm\s*(?:việc\s*)?(?:cả\s*)?{_SAT}")
+_WEEKDAYS_ONLY_RE = re.compile(
+    rf"{_MON}{_TO}(?:th[ứu]\s*(?:6|s[áa]u)|\bt6\b|friday|\bfri\b)"
+    r"|5[\s-]*(?:days?|ngày)\s*(?:working|làm\s*việc|work\s*week|/\s*tuần|mỗi\s*tuần|một\s*tuần|per\s*week)"
+    r"|làm\s*việc\s*5\s*ngày")
+
+
+def detect_saturday_off(text: str) -> Optional[bool]:
+    """True = nghỉ thứ 7, False = có làm thứ 7 (kể cả nửa buổi/cách tuần), None = JD không ghi rõ."""
+    low = re.sub(r"\s+", " ", (text or "").lower())
+    explicit_off = bool(_SAT_OFF_RE.search(low))
+    # bỏ cụm "nghỉ/không làm thứ 7" trước khi tìm dấu hiệu làm T7, kẻo "không làm thứ 7" bị đọc thành "làm thứ 7"
+    if _SAT_WORK_RE.search(_SAT_OFF_RE.sub(" ", low)):
+        return False
+    if explicit_off or _WEEKDAYS_ONLY_RE.search(low):
+        return True
+    return None
+
+
 # Cấp bậc theo text nguồn (vi) - hard-code mapping từng nguồn
 # Lưu ý THỨ TỰ: từ khóa cấp cao/specific đứng TRƯỚC, từ khóa role chung
 # (executive/officer/nhân viên...) đứng CUỐI để "Senior Executive" vẫn ra senior,
@@ -347,6 +379,8 @@ def normalize_job(job: NormalizedJob) -> NormalizedJob:
     job.platforms = extract_platforms(blob)
     job.creative_tools = extract_tools(blob)
     job.portfolio_required = detect_portfolio_required(blob)
+    job.saturday_off = detect_saturday_off(
+        f"{job.description} {job.requirements} {' '.join(job.benefits)}")
     if not job.deadline:  # mặc định 30 ngày nếu không rõ
         from datetime import timedelta
         from .models import utcnow

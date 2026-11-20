@@ -188,6 +188,7 @@ class NormalizedJob:
     platforms: list[str] = field(default_factory=list)
     creative_tools: list[str] = field(default_factory=list)
     portfolio_required: Optional[bool] = None
+    saturday_off: Optional[bool] = None   # True nghỉ T7, False có làm T7, None JD không ghi
     deadline: Optional[datetime] = None
     description: str = ""
     requirements: str = ""
