@@ -180,17 +180,24 @@ async def enrich_job_details(store: JobStore, source: str, limit: int = 50):
     if rows:
         log.info("Lấy JD chi tiết cho %d job còn thiếu JD", len(rows))
     updated = 0
+    failed_in_row: dict[str, int] = {}  # nguồn lỗi 3 lần liền (bị chặn/giới hạn) -> thôi gọi tiếp
     for r in rows:
+        if failed_in_row.get(r["source"], 0) >= 3:
+            continue
         try:
             detail = await fetch_detail(r["source"], r["source_url"])
         except Exception as e:  # noqa: BLE001
             log.warning("%s · job #%d: lỗi lấy JD (%s: %s)", r["source"], r["job_id"],
                         type(e).__name__, str(e)[:120])
-            continue
+            detail = None
         if detail is None:
             log.warning("%s · job #%d: không lấy được JD từ trang chi tiết",
                         r["source"], r["job_id"])
+            failed_in_row[r["source"]] = failed_in_row.get(r["source"], 0) + 1
+            if failed_in_row[r["source"]] == 3:
+                log.warning("%s: 3 job liền không lấy được JD — dừng lấy JD nguồn này lượt này", r["source"])
             continue
+        failed_in_row[r["source"]] = 0
         # lịch làm việc thường chỉ có trong JD chi tiết -> tính lại cho bộ lọc T2–T6
         only = detect_weekdays_only(
             f"{detail.description} {detail.requirements} {' '.join(detail.benefits)}")

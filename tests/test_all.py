@@ -1904,3 +1904,35 @@ class TestScanCoverage:
         monkeypatch.setattr(df, "fetch_detail", fake_fetch)
         assert await enrich_job_details(store, "topcv") == 1
         assert store.get_job(jid)["weekdays_only"] is True
+
+    async def test_topcv_stops_when_blocked_or_page_budget_used(self, monkeypatch):
+        from agent_search_job.sources.base import DiscoverInput
+        from agent_search_job.sources.topcv import TopCVAdapter
+
+        async def must_not_fetch(*a, **k):
+            raise AssertionError("không được tải trang TopCV")
+
+        monkeypatch.setattr(TopCVAdapter, "_fetch_search_pages", must_not_fetch)
+        a = TopCVAdapter()
+        a.pages_left = 0  # hết số trang của lượt -> bỏ qua êm, không tải thêm
+        assert [j async for j in a.discover(DiscoverInput(query="content"))] == []
+        a.pages_left, a.blocked = 5, True  # đã gặp 429 -> mọi từ khoá sau báo lỗi, không tải thêm
+        with pytest.raises(RuntimeError, match="429"):
+            [j async for j in a.discover(DiscoverInput(query="content"))]
+
+    async def test_enrich_details_stops_source_after_three_failures(self, monkeypatch):
+        import agent_search_job.sources.detail_fetchers as df
+        from agent_search_job.pipeline.rescan import enrich_job_details
+        store = JobStore(":memory:")
+        for i in range(6):
+            store.insert_job(normalize_job(make_job(title=f"Content {i}", source="topcv",
+                                                    source_job_id=str(i), description="ngắn")))
+        calls = []
+
+        async def blocked_fetch(source, url, timeout=20.0):
+            calls.append(url)
+            return None
+
+        monkeypatch.setattr(df, "fetch_detail", blocked_fetch)
+        assert await enrich_job_details(store, "topcv") == 0
+        assert len(calls) == 3

@@ -8,6 +8,7 @@ Chậm (~15s/request) -> pipeline chạy background worker, không chạy trong 
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import re
 import unicodedata
@@ -15,6 +16,8 @@ from typing import AsyncIterator, Optional
 
 from ..domain.models import Company, NormalizedJob, utcnow, SourceName
 from .base import DiscoverInput, JobSourceAdapter, SourceHealth
+
+log = logging.getLogger(__name__)
 
 SEARCH_URL = "https://www.topcv.vn/tim-viec-lam-{slug}-tai-ho-chi-minh-kl2"  # đã lọc TP.HCM (kl2)
 UA = (
@@ -26,7 +29,11 @@ UA = (
 class TopCVAdapter(JobSourceAdapter):
     """Mỗi từ khoá lật trang ?page=2,3... (25–50 job/trang) tới khi hết job mới hoặc đủ
     TOPCV_MAX_PAGES trang. Đã đo 22/11/2026: "content-marketing" TP.HCM > 7 trang, "marketing"
-    > 7 trang x 50 — chỉ lấy trang 1 như trước thì sót ~280/330 job đúng nhóm nghề."""
+    > 7 trang x 50 — chỉ lấy trang 1 như trước thì sót ~280/330 job đúng nhóm nghề.
+
+    Quét lịch sự: TopCV (Cloudflare) trả 429 + trang "Chờ một chút..." khi tải trang dồn dập
+    (đo 22/11/2026). Nghỉ TOPCV_PAGE_DELAY giây giữa các trang, tối đa TOPCV_MAX_PAGES_PER_RUN
+    trang mỗi lượt; gặp 429/trang xác minh thì DỪNG TopCV cả lượt (không cố vượt), ghi lỗi."""
     name = SourceName.TOPCV.value
 
     def __init__(self, headless: bool = True, slow_mo: int = 0):
@@ -36,8 +43,17 @@ class TopCVAdapter(JobSourceAdapter):
         # pipeline đọc thuộc tính này thay cho giới hạn chung (30/từ khoá) vì TopCV phân trang sâu
         self.max_results_per_query = max(1, int(os.environ.get("TOPCV_MAX_RESULTS") or 250))
         self._seen: set[str] = set()  # job_id đã trả trong lượt này: từ khoá sau trùng thì không lật tiếp
+        self.page_delay = max(0.0, float(os.environ.get("TOPCV_PAGE_DELAY") or 8))
+        self.pages_left = max(1, int(os.environ.get("TOPCV_MAX_PAGES_PER_RUN") or 60))
+        self.blocked = False
 
     async def discover(self, input: DiscoverInput) -> AsyncIterator[NormalizedJob]:
+        if self.blocked:
+            raise RuntimeError("TopCV đang giới hạn truy cập (429/xác minh bot) — bỏ qua TopCV lượt này")
+        if self.pages_left <= 0:
+            log.info("TopCV: đã dùng hết %s trang của lượt này, bỏ qua %r",
+                     os.environ.get("TOPCV_MAX_PAGES_PER_RUN") or 60, input.query)
+            return
         # bỏ dấu tiếng Việt: "sáng tạo nội dung" -> "sang-tao-noi-dung" (slug TopCV)
         plain = unicodedata.normalize("NFD", input.query.lower().replace("đ", "d"))
         plain = "".join(ch for ch in plain if unicodedata.category(ch) != "Mn")
@@ -64,8 +80,19 @@ class TopCVAdapter(JobSourceAdapter):
             page = await ctx.new_page()
             try:
                 for n in range(1, max_pages + 1):
-                    await page.goto(url + (f"?page={n}" if n > 1 else ""),
-                                    wait_until="domcontentloaded", timeout=60000)
+                    if self.pages_left <= 0:
+                        break
+                    if n > 1 or self._seen:  # mọi lần tải trang trừ trang đầu tiên của lượt
+                        await asyncio.sleep(self.page_delay)
+                    self.pages_left -= 1
+                    resp = await page.goto(url + (f"?page={n}" if n > 1 else ""),
+                                           wait_until="domcontentloaded", timeout=60000)
+                    if (resp is not None and resp.status in (403, 429)) or \
+                            re.search(r"Chờ một chút|Just a moment", await page.title()):
+                        self.blocked = True
+                        log.warning("TopCV trả %s (Cloudflare giới hạn truy cập) ở %s — dừng TopCV lượt này",
+                                    resp.status if resp is not None else "?", page.url)
+                        break
                     if n == 1:  # cookie banner bắt buộc phải chấp nhận (1 lần mỗi browser)
                         for sel in (
                             "button:has-text('Chấp nhận tất cả')",
