@@ -167,7 +167,7 @@ async def _run_rescan(store: JobStore, source: str, query: str,
 
 async def enrich_job_details(store: JobStore, source: str, limit: int = 50):
     """Fetch JD đầy đủ cho job chưa có description (hard-code selector từng nguồn)."""
-    from ..domain.normalize import normalize_job
+    from ..domain.normalize import detect_weekdays_only
     from ..sources.detail_fetchers import fetch_detail
 
     where = "description IS NULL OR LENGTH(description) < 200"
@@ -191,12 +191,16 @@ async def enrich_job_details(store: JobStore, source: str, limit: int = 50):
             log.warning("%s · job #%d: không lấy được JD từ trang chi tiết",
                         r["source"], r["job_id"])
             continue
+        # lịch làm việc thường chỉ có trong JD chi tiết -> tính lại cho bộ lọc T2–T6
+        only = detect_weekdays_only(
+            f"{detail.description} {detail.requirements} {' '.join(detail.benefits)}")
         with store.conn:
             store.conn.execute(
-                """UPDATE jobs SET description=?, requirements=?, benefits=?
+                """UPDATE jobs SET description=?, requirements=?, benefits=?, weekdays_only=?
                    WHERE job_id=?""",
                 (detail.description or "", detail.requirements or "",
-                 __import__("json").dumps(detail.benefits), r["job_id"]),
+                 __import__("json").dumps(detail.benefits),
+                 None if only is None else int(only), r["job_id"]),
             )
         updated += 1
     return updated

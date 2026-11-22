@@ -36,6 +36,23 @@ DEFAULT_QUERIES = [
     "creative",
     "content",
     "truyền thông",
+    # mở rộng 22/11/2026 — so với TopCV còn sót nhiều việc đăng bằng tiêu đề tiếng Việt/ngách:
+    # vẫn trong role list (in_role_scope lọc lại), KHÔNG thêm digital/performance marketing
+    "marketing",
+    "nhân viên marketing",
+    "nhân viên content",
+    "sáng tạo nội dung",
+    "biên tập nội dung",
+    "content tiktok",
+    "tiktok",
+    "content seo",
+    "marketing online",
+    "pr",
+    "quan hệ công chúng",
+    "media",
+    "livestream",
+    "kol koc",
+    "fanpage",
 ]
 
 # Job ngoài phạm vi role list -> bỏ, không lưu (kể cả khi nguồn trả về):
@@ -248,13 +265,14 @@ class IngestPipeline:
             for q in queries:
                 try:
                     got = 0
+                    # nguồn phân trang sâu (TopCV) tự đặt giới hạn riêng/từ khoá
+                    limit = getattr(adapter, "max_results_per_query", None) or max_results_per_query
                     async for job in adapter.discover(DiscoverInput(
-                        query=q, location="Ho Chi Minh",
-                        max_results=max_results_per_query,
+                        query=q, location="Ho Chi Minh", max_results=limit,
                     )):
                         raw_jobs.append(job)
                         got += 1
-                        if got >= max_results_per_query:
+                        if got >= limit:
                             break
                     log.info("%s · %r: %d job", adapter.name, q, got)
                     if got:

@@ -45,6 +45,9 @@ services:
       EXPIRED_PURGE_HOURS: "${EXPIRED_PURGE_HOURS-6}"
       SCAN_JD_DETAILS: "${SCAN_JD_DETAILS-1}"
       SCAN_LINKEDIN: "${SCAN_LINKEDIN-1}"
+      # TopCV trong lượt quét định kỳ (Playwright, lật tối đa TOPCV_MAX_PAGES trang/từ khoá)
+      SCAN_TOPCV: "${SCAN_TOPCV-1}"
+      TOPCV_MAX_PAGES: "${TOPCV_MAX_PAGES-10}"
       SITE_URL: "${SITE_URL-}"
       # Mail thông báo job mới (SMTP_HOST + MAIL_TO trống -> không gửi mail)
       SMTP_HOST: "${SMTP_HOST-}"

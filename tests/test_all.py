@@ -785,7 +785,7 @@ class TestWebAPI:
         assert seen["adapters"] == ["topcv"]
         # từ khoá gõ trên form quét trước, rồi đủ role list mặc định (không trùng)
         from agent_search_job.pipeline.ingest import DEFAULT_QUERIES
-        assert seen["queries"] == ["marketing", *DEFAULT_QUERIES]
+        assert seen["queries"] == list(dict.fromkeys(["marketing", *DEFAULT_QUERIES]))
         assert st["running"] is False and st["ok"] is False and st["finished_at"]
         assert st["message"] == "Hoàn tất: +2 việc mới, 1 cập nhật, 1 lỗi"
         assert st["summary"] == {"discovered": 0, "inserted": 2, "updated": 1,
@@ -1176,8 +1176,10 @@ def _mock_httpx(monkeypatch, handler):
 
 
 class TestPurgeScript:
-    def test_purge_dry_run_then_delete_with_backup(self, tmp_path, capsys):
+    def test_purge_dry_run_then_delete_with_backup(self, tmp_path, capsys, monkeypatch):
         import importlib.util
+        # script nạp .env của máy dev vào os.environ: chặn lại, kẻo các test sau chạy quét định kỳ thật
+        monkeypatch.setattr("dotenv.load_dotenv", lambda *a, **k: False)
         spec = importlib.util.spec_from_file_location(
             "purge", Path(__file__).resolve().parent.parent / "scripts" / "purge.py")
         purge = importlib.util.module_from_spec(spec)
@@ -1830,3 +1832,75 @@ def test_source_facets_always_all_sources():
     by = {x["value"]: x["count"] for x in f2["sources"]}
     assert by["topcv"] == 1
     assert by["itviec"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Độ phủ quét: TopCV phân trang TP.HCM, giới hạn riêng mỗi nguồn, JD bổ sung
+# ---------------------------------------------------------------------------
+
+class TestScanCoverage:
+    async def test_topcv_uses_hcm_url_with_vietnamese_slug_and_dedupes(self, monkeypatch):
+        from agent_search_job.sources.base import DiscoverInput
+        from agent_search_job.sources.topcv import TopCVAdapter
+        calls = []
+
+        async def fake_pages(self, url, max_pages, max_results, seen):
+            calls.append((url, max_pages, max_results))
+            fresh = [j for j in (NormalizedJob(title="Content Creator", source_job_id=i) for i in ("1", "2"))
+                     if j.source_job_id not in seen]
+            seen.update(j.source_job_id for j in fresh)
+            return fresh
+
+        monkeypatch.setattr(TopCVAdapter, "_fetch_search_pages", fake_pages)
+        monkeypatch.setenv("TOPCV_MAX_PAGES", "4")
+        a = TopCVAdapter()
+        first = [j async for j in a.discover(DiscoverInput(query="Sáng tạo nội dung", max_results=99))]
+        again = [j async for j in a.discover(DiscoverInput(query="content", max_results=99))]
+        assert calls[0] == ("https://www.topcv.vn/tim-viec-lam-sang-tao-noi-dung-tai-ho-chi-minh-kl2", 4, 99)
+        assert calls[1][0] == "https://www.topcv.vn/tim-viec-lam-content-tai-ho-chi-minh-kl2"
+        assert len(first) == 2 and again == []  # cùng job_id ở từ khoá sau -> không trả lại
+
+    async def test_pipeline_honours_adapter_max_results_per_query(self):
+        from agent_search_job.pipeline.ingest import IngestPipeline
+        from agent_search_job.sources.base import SourceHealth
+        got = {}
+
+        class DeepAdapter:
+            name = "topcv"
+            max_results_per_query = 7
+
+            async def health_check(self):
+                return SourceHealth(source=self.name, ok=True)
+
+            async def discover(self, input):
+                got["max_results"] = input.max_results
+                for i in range(20):
+                    yield NormalizedJob(title=f"Content Writer {i}", company_name=f"Cty {i}",
+                                        city="Hồ Chí Minh", source=self.name, source_job_id=str(i))
+
+        res = await IngestPipeline(JobStore(":memory:"), [DeepAdapter()]).run(
+            queries=["content"], max_results_per_query=3)
+        assert got["max_results"] == 7 and res.discovered == 7
+
+    def test_scheduled_scan_includes_topcv_unless_disabled(self, monkeypatch):
+        from agent_search_job.pipeline.scheduled_scan import _adapters
+        monkeypatch.delenv("SCAN_TOPCV", raising=False)
+        assert "topcv" in [a.name for a in _adapters()]
+        monkeypatch.setenv("SCAN_TOPCV", "0")
+        assert "topcv" not in [a.name for a in _adapters()]
+        assert "topcv" in [a.name for a in _adapters(with_topcv=True)]
+
+    async def test_enrich_details_recomputes_weekdays_only(self, monkeypatch):
+        import agent_search_job.sources.detail_fetchers as df
+        from agent_search_job.pipeline.rescan import enrich_job_details
+        store = JobStore(":memory:")
+        jid = store.insert_job(normalize_job(make_job(source="topcv", description="ngắn")))
+        assert store.get_job(jid)["weekdays_only"] is None
+
+        async def fake_fetch(source, url, timeout=20.0):
+            return df.JobDetail(description="Mô tả công việc dài " * 20, requirements="",
+                                benefits=["Làm việc Thứ 2 - Thứ 6, nghỉ T7 CN"])
+
+        monkeypatch.setattr(df, "fetch_detail", fake_fetch)
+        assert await enrich_job_details(store, "topcv") == 1
+        assert store.get_job(jid)["weekdays_only"] is True

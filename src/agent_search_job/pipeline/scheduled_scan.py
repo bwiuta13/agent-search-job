@@ -190,7 +190,8 @@ def _adapters(with_topcv: bool = False):
     if os.environ.get("SCAN_LINKEDIN", "1").strip().lower() not in ("0", "false", "no", "off"):
         adapters.append(LinkedInAdapter())
     adapters += [ITviecAdapter(), CareerVietAdapter(), TopDevAdapter(), VNGCareersAdapter()]
-    if with_topcv:
+    # TopCV (Playwright, ~5 phút/lượt) bật mặc định: tắt bằng SCAN_TOPCV=0
+    if with_topcv or os.environ.get("SCAN_TOPCV", "1").strip().lower() not in ("0", "false", "no", "off"):
         from ..sources.topcv import TopCVAdapter
         adapters.append(TopCVAdapter())
     return adapters
@@ -223,7 +224,7 @@ async def run_scheduled_scan(store: JobStore, with_details: bool = True,
 
         if with_details:
             n = 0
-            for src in ("itviec", "careerviet", "topdev"):
+            for src in ("itviec", "careerviet", "topdev", "topcv"):
                 try:
                     n += await enrich_job_details(store, src, limit=40)
                 except Exception as e:  # noqa: BLE001
