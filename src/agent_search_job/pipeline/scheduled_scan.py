@@ -247,7 +247,7 @@ async def run_scheduled_scan(store: JobStore, with_details: bool = True,
             ok, msg = notify_new_jobs(res.new_jobs, summary, site_url)
             res.mail = {"sent": ok, "message": msg, "count": len(res.new_jobs)}
         else:
-            res.mail = {"sent": False, "message": "Không có job mới" if not res.new_jobs
+            res.mail = {"sent": False, "message": "Không có job mới T2–T6" if not res.new_jobs
                         else "Tắt gửi mail (—no-notify)", "count": len(res.new_jobs)}
         res.ok = True
     except Exception as e:  # noqa: BLE001 - lượt scan lỗi không được làm sập vòng lặp
@@ -263,7 +263,8 @@ async def run_scheduled_scan(store: JobStore, with_details: bool = True,
 
 
 def _jobs_by_ids(store: JobStore, job_ids: list[int], limit: int = 50) -> list[dict]:
-    """Job theo danh sách job_id (mới insert trong lượt quét), chỉ job còn active."""
+    """Job theo danh sách job_id (mới insert trong lượt quét), chỉ job còn active và JD ghi rõ
+    làm T2–T6, nghỉ trọn T7 + CN (lọc cứng: mail chỉ báo những việc này)."""
     if not job_ids:
         return []
     ids = list(dict.fromkeys(job_ids))[-limit:]  # mới nhất trước, bỏ trùng
@@ -271,9 +272,9 @@ def _jobs_by_ids(store: JobStore, job_ids: list[int], limit: int = 50) -> list[d
     rows = store.conn.execute(
         f"""SELECT job_id, title, company_name, salary_text, salary_min_vnd,
                    salary_max_vnd, district, role_cluster, job_level,
-                   apply_url, source_url, first_seen_at, saturday_off
-            FROM jobs WHERE job_id IN ({qs}) AND is_active=1
-            ORDER BY CASE saturday_off WHEN 1 THEN 0 WHEN 0 THEN 2 ELSE 1 END, job_id DESC""",
+                   apply_url, source_url, first_seen_at
+            FROM jobs WHERE job_id IN ({qs}) AND is_active=1 AND weekdays_only=1
+            ORDER BY job_id DESC""",
         ids,
     ).fetchall()
     return [dict(r) for r in rows]

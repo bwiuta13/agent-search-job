@@ -308,7 +308,7 @@ class TestCvUpload:
 def add_job(appmod, **kw) -> int:
     fields = dict(title="Content Marketing Executive", company_name="Công Ty TNHH ABC",
                   salary_text="15 - 25 triệu", address="123 Nguyễn Huệ, Quận 1, TP.HCM",
-                  city="Hồ Chí Minh", description="Viết content TikTok, Facebook. Dùng Canva, CapCut.",
+                  city="Hồ Chí Minh", description="Viết content TikTok, Facebook. Dùng Canva, CapCut. Làm việc Thứ 2 - Thứ 6.",
                   requirements="2 năm kinh nghiệm content", source="vietnamworks",
                   source_url="https://example.com/job/1", source_job_id="1")
     fields.update(kw)

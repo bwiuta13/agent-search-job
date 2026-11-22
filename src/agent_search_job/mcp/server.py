@@ -48,6 +48,9 @@ SEARCH_INPUT_SCHEMA = {
         "posted_within_days": {"type": "integer", "minimum": 1,
                                "maximum": MAX_POSTED_WITHIN_DAYS, "default": 14},
         "portfolio_required": {"type": "boolean"},
+        "weekdays_only": {"type": "boolean", "default": True,
+                          "description": ("Mặc định true: chỉ job JD ghi rõ làm T2–T6, nghỉ trọn T7 + CN. "
+                                          "false = xem cả job không ghi lịch (job có làm T7/CN xếp cuối)")},
         "source": {"type": "string", "enum": VALID_SOURCES, "default": "all"},
         "page_size": {"type": "integer", "minimum": 1, "maximum": MAX_PAGE_SIZE,
                       "default": 10},
@@ -319,6 +322,7 @@ class MCPServer:
             company_query=args.get("company_query"),
             posted_within_days=args.get("posted_within_days", 14),
             portfolio_required=args.get("portfolio_required"),
+            weekdays_only=args.get("weekdays_only", True) is not False,
             source=args.get("source", "all"),
             page_size=args.get("page_size", 10),
             cursor=args.get("cursor"),
@@ -331,7 +335,7 @@ class MCPServer:
             company_query=f.company_query,
             posted_within_days=f.posted_within_days,
             portfolio_required=f.portfolio_required, source=f.source,
-            page_size=f.page_size, cursor=f.cursor,
+            page_size=f.page_size, cursor=f.cursor, weekdays_only=f.weekdays_only,
         )
         last = self.store.last_crawl_run() or {}
         return {
@@ -346,6 +350,7 @@ class MCPServer:
                 "job_levels": f.job_levels, "company_query": f.company_query,
                 "posted_within_days": f.posted_within_days,
                 "portfolio_required": f.portfolio_required, "source": f.source,
+                "weekdays_only": f.weekdays_only,
                 "page_size": f.page_size,
             },
             "data_freshness": {
@@ -410,7 +415,7 @@ class MCPServer:
             company_query=f.company_query,
             posted_within_days=f.posted_within_days,
             portfolio_required=f.portfolio_required, source=f.source,
-            page_size=f.page_size, cursor=f.cursor,
+            page_size=f.page_size, cursor=f.cursor, weekdays_only=f.weekdays_only,
         )
         last = self.store.last_crawl_run() or {}
         return {
@@ -424,6 +429,7 @@ class MCPServer:
                 "job_levels": f.job_levels, "company_query": f.company_query,
                 "posted_within_days": f.posted_within_days,
                 "portfolio_required": f.portfolio_required, "source": f.source,
+                "weekdays_only": f.weekdays_only,
             },
             "parser": {
                 "llm_used": parsed.llm_used,

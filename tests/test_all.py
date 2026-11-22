@@ -32,7 +32,8 @@ def make_job(**kw) -> NormalizedJob:
         salary_text="15 - 25 triệu",
         address="123 Nguyễn Huệ, Quận 1, TP.HCM",
         city="Hồ Chí Minh",
-        description="Làm content TikTok, Facebook. Dùng Canva, CapCut.",
+        # JD mẫu ghi rõ lịch T2–T6 để qua bộ lọc cứng weekdays_only (mặc định bật ở web/MCP/API)
+        description="Làm content TikTok, Facebook. Dùng Canva, CapCut. Làm việc Thứ 2 - Thứ 6.",
         requirements="2 năm kinh nghiệm content marketing",
         source="vietnamworks",
         source_url="https://example.com/job/1",
@@ -172,14 +173,17 @@ class TestNormalizeJob:
         assert store.get_job(jid)["title"] == "Social Media Leader | AI & AUTOMATION"
 
     @pytest.mark.parametrize("text,expected", [
-        # nghỉ T7
+        # chỉ T2–T6, nghỉ trọn T7 + CN
         ("Thời gian làm việc: T2-T6 (8:00-17:30)", True),
         ("Working Days: Thứ 2 – Thứ 6 (3 giờ/ngày)", True),
         ("Ngày làm việc: Thứ Hai – Thứ Sáu. Giờ làm việc: 07:00–16:00", True),
         ("5-day working per week (Monday to Friday)", True),
         ("Nghỉ Thứ 7, Chủ nhật, lễ Tết theo quy định", True),
         ("Không làm thứ 7 và chủ nhật", True),
+        ("Làm việc T2 - T6 (nghỉ T7, CN)", True),
         ("Thứ 2 - Thứ 6, nghỉ 2 thứ Bảy và Chủ nhật", True),
+        ("Working hours: Monday - Friday, weekends off", True),
+        ("40 giờ/tuần, làm việc tại văn phòng Quận 1", True),
         # có làm T7 (kể cả nửa buổi, cách tuần, online)
         ("Thứ 2 – Thứ 6: 08:30 – 18:00 • Thứ 7: 08:30 – 12:00", False),
         ("Monday – Friday: 8:00 AM – 5:30 PM Saturday: 8:00 AM – 12:00 PM", False),
@@ -189,15 +193,26 @@ class TestNormalizeJob:
         ("08h00 - 17h00, từ Thứ 2 đến hết buổi sáng Thứ 7", False),
         ("Thứ 2 - Thứ 6: 08:00 - 17:30. Thứ 7: Làm việc online tại nhà", False),
         ("Thứ 7 làm cách tuần", False),
+        ("Thứ 2 - Thứ 6, nghỉ thứ 7 cách tuần", False),
+        # có làm CN / cuối tuần / theo ca / 6 ngày một tuần
+        ("Thứ 2 - Thứ 6 và Chủ nhật: 9h - 12h", False),
+        ("Làm việc T2 - CN, nghỉ 1 ngày trong tuần", False),
+        ("Nghỉ Thứ 7, Chủ nhật. Có thể làm việc vào sáng thứ Bảy hoặc sáng Chủ nhật khi có lịch", False),
+        ("Thứ 2 - Thứ 6, hỗ trợ sự kiện cuối tuần khi cần", False),
+        ("Làm việc theo ca, xoay ca linh hoạt", False),
+        ("Làm việc 6 ngày/tuần", False),
+        ("Thời gian làm việc 48 giờ/tuần", False),
         # JD không ghi lịch
-        ("Làm content TikTok, Facebook. Dùng Canva, CapCut.", None),
+        ("Viết content TikTok, Facebook. Dùng Canva, CapCut.", None),
+        ("Làm việc tại CN Quận 1, team trẻ năng động", None),
+        ("Phối hợp team để triển khai content theo campaign, báo cáo theo tuần/tháng", None),
     ])
-    def test_saturday_off(self, text, expected):
-        assert normalize_job(make_job(description=text)).saturday_off is expected
+    def test_weekdays_only(self, text, expected):
+        assert normalize_job(make_job(description=text)).weekdays_only is expected
 
-    def test_saturday_off_from_benefits(self):
-        job = normalize_job(make_job(benefits=["Làm việc 5 ngày/tuần, nghỉ T7 CN"]))
-        assert job.saturday_off is True
+    def test_weekdays_only_from_benefits(self):
+        job = normalize_job(make_job(description="Viết content", benefits=["Làm việc 5 ngày/tuần, nghỉ T7 CN"]))
+        assert job.weekdays_only is True
 
 
 # ---------------------------------------------------------------------------
@@ -213,34 +228,44 @@ class TestStore:
         assert res["total_estimate"] >= 1
         assert any(i["job_id"] == jid for i in res["items"])
 
-    def test_search_ranks_saturday_off_first(self):
+    def test_search_weekdays_only_filter_and_ranking(self):
         store = JobStore(":memory:")
-        sat = store.insert_job(normalize_job(make_job(
+        weekend = store.insert_job(normalize_job(make_job(
             title="Content Sat", description="Thứ 2 - Thứ 6, Thứ 7: 8h-12h")))
-        off = store.insert_job(normalize_job(make_job(
-            title="Content Off", description="Làm việc Thứ 2 - Thứ 6")))
-        unknown = store.insert_job(normalize_job(make_job(title="Content Unknown")))
+        weekdays = store.insert_job(normalize_job(make_job(title="Content Off")))
+        unknown = store.insert_job(normalize_job(make_job(title="Content Unknown", description="Viết content")))
+        # lọc cứng: chỉ job ghi rõ T2–T6, nghỉ trọn T7 + CN
+        res = store.search_jobs(page_size=10, weekdays_only=True)
+        assert [i["job_id"] for i in res["items"]] == [weekdays] and res["total_estimate"] == 1
+        # tắt lọc: T2–T6 trước, không ghi lịch giữa, có làm cuối tuần cuối
         items = store.search_jobs(page_size=10)["items"]
-        assert [i["job_id"] for i in items] == [off, unknown, sat]
-        assert [i["saturday_off"] for i in items] == [True, None, False]
+        assert [i["job_id"] for i in items] == [weekdays, unknown, weekend]
+        assert [i["weekdays_only"] for i in items] == [True, None, False]
 
-    def test_update_keeps_saturday_off_when_new_crawl_has_no_jd(self):
+    def test_update_keeps_weekdays_only_when_new_crawl_has_no_jd(self):
         store = JobStore(":memory:")
         jid = store.insert_job(normalize_job(make_job(description="Thứ 2 - Thứ 6")))
         store.update_job(jid, normalize_job(make_job(description="")))
-        assert store.get_job(jid)["saturday_off"] is True
+        assert store.get_job(jid)["weekdays_only"] is True
         store.update_job(jid, normalize_job(make_job(description="T2 - T7")))
-        assert store.get_job(jid)["saturday_off"] is False
+        assert store.get_job(jid)["weekdays_only"] is False
 
-    def test_migrate_backfills_saturday_off_on_old_db(self, tmp_path):
+    def test_migrate_replaces_saturday_off_with_weekdays_only(self, tmp_path):
         db = str(tmp_path / "old.db")
         store = JobStore(db)
-        jid = store.insert_job(normalize_job(make_job(benefits=["Monday to Friday"])))
-        # giả lập DB cũ chưa có cột saturday_off
+        off = store.insert_job(normalize_job(make_job(description="Viết content", benefits=["Monday to Friday"])))
+        sun = store.insert_job(normalize_job(make_job(
+            title="Video Editor", description="Thứ 2 - Thứ 6 và Chủ nhật: 9h - 12h")))
+        # giả lập DB của bản trước: có cột saturday_off, chưa có weekdays_only
         with store.conn:
-            store.conn.execute("ALTER TABLE jobs DROP COLUMN saturday_off")
+            store.conn.execute("ALTER TABLE jobs DROP COLUMN weekdays_only")
+            store.conn.execute("ALTER TABLE jobs ADD COLUMN saturday_off INTEGER")
         store.conn.close()
-        assert JobStore(db).get_job(jid)["saturday_off"] is True
+        migrated = JobStore(db)
+        cols = {r["name"] for r in migrated.conn.execute("PRAGMA table_info(jobs)")}
+        assert "saturday_off" not in cols
+        assert migrated.get_job(off)["weekdays_only"] is True
+        assert migrated.get_job(sun)["weekdays_only"] is False
 
     def test_dedupe_idempotent(self):
         store = JobStore(":memory:")
@@ -431,6 +456,17 @@ class TestMCPServer:
         import json
         json.loads(r["result"]["content"][0]["text"])
 
+    async def test_search_tool_weekdays_only_by_default(self):
+        srv = self._srv()  # job mẫu ghi "Thứ 2 - Thứ 6"
+        srv.store.insert_job(normalize_job(make_job(title="Content Weekend", description="T2 - T7")))
+        call = lambda args: srv.handle({"jsonrpc": "2.0", "id": 5, "method": "tools/call",  # noqa: E731
+                                        "params": {"name": "vn_jobs_search_jobs", "arguments": args}})
+        sc = (await call({"query": "content"}))["result"]["structuredContent"]
+        assert [i["title"] for i in sc["items"]] == ["Content Marketing Specialist"]
+        assert sc["applied_filters"]["weekdays_only"] is True
+        sc = (await call({"query": "content", "weekdays_only": False}))["result"]["structuredContent"]
+        assert [i["title"] for i in sc["items"]] == ["Content Marketing Specialist", "Content Weekend"]
+
     async def test_search_validation_error(self):
         srv = self._srv()
         r = await srv.handle({"jsonrpc": "2.0", "id": 4, "method": "tools/call",
@@ -546,6 +582,22 @@ class TestWebAPI:
         assert r2.text.count('class="job-card"') == 5
         assert "Content Writer 0<" in r1.text + r2.text
         assert 'value="content"' in r2.text and "page=1" in r2.text
+
+    def test_search_weekdays_only_by_default_with_all_days_toggle(self):
+        client = self._client()
+        import agent_search_job.web.app as appmod
+        store = appmod.get_store()
+        store.insert_job(normalize_job(make_job(title="Content Weekdays")))
+        store.insert_job(normalize_job(make_job(title="Content No Schedule", description="Viết content")))
+        store.insert_job(normalize_job(make_job(title="Content Weekend", description="T2 - T6, T7: 8h-12h")))
+        r = client.get("/search")
+        assert "Content Weekdays<" in r.text and "Content No Schedule<" not in r.text
+        assert "Content Weekend<" not in r.text and "chỉ T2–T6, nghỉ trọn T7 &amp; CN" in r.text
+        r = client.get("/search?all_days=1")
+        assert all(f"{t}<" in r.text for t in ("Content Weekdays", "Content No Schedule", "Content Weekend"))
+        assert "Xoá bộ lọc" in r.text
+        assert [i["title"] for i in client.get("/api/jobs").json()["items"]] == ["Content Weekdays"]
+        assert len(client.get("/api/jobs?weekdays_only=false").json()["items"]) == 3
 
     def test_search_has_no_role_sidebar_and_clear_filter_button(self):
         """Đã bỏ cột "Tất cả" (nhóm nghề) bên trái; nút "Xoá bộ lọc" chỉ hiện khi đang lọc, bấm về /search sạch."""
@@ -1411,9 +1463,16 @@ class TestSmartSearch:
             assert sc["parser"]["llm_used"]
             assert sc["total_estimate"] >= 1
             assert sc["parsed_filters"]["query"] == "content"
+            assert sc["parsed_filters"]["weekdays_only"] is True  # LLM không trả field -> giữ lọc cứng
         finally:
             nq.httpx.AsyncClient = orig
             del os.environ["OPENAI_API_KEY"]
+
+    def test_rule_parse_keeps_weekdays_only_unless_asked(self):
+        from agent_search_job.pipeline.nl_query import rule_parse
+        assert rule_parse("việc content tiktok").weekdays_only is True
+        assert rule_parse("việc content kể cả làm thứ 7").weekdays_only is False
+        assert rule_parse("content mọi lịch làm việc").weekdays_only is False
 
     async def test_smart_search_empty_text_error(self):
         from agent_search_job.mcp.server import MCPServer

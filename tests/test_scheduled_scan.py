@@ -222,6 +222,37 @@ class TestScheduledScan:
         assert "jobs.example.com/jobs/" in mail_text
         assert "ban@example.com" in mail_text and "nguoiB@example.com" in mail_text
 
+    async def test_scan_mails_only_weekdays_only_jobs(self, monkeypatch, fake_smtp):
+        """Mail việc mới chỉ gồm job ghi rõ T2–T6, nghỉ trọn T7 + CN."""
+        store = JobStore(":memory:")
+        _install_adapters(monkeypatch, [
+            make_job(title="Content Weekdays", company_name="Công Ty A", source_job_id="w1"),
+            make_job(title="Content Weekend", company_name="Công Ty B", source_job_id="w2",
+                     description="Thứ 2 - Thứ 6, Thứ 7: 8h - 12h"),
+            make_job(title="Content No Schedule", company_name="Công Ty C", source_job_id="w3",
+                     description="Viết content"),
+        ])
+        _smtp_env(monkeypatch, fake_smtp)
+
+        res = await run_scheduled_scan(store, with_details=False)
+
+        assert res.inserted == 3 and [j["title"] for j in res.new_jobs] == ["Content Weekdays"]
+        mail_text = _decoded_mail(fake_smtp.sent[0])
+        assert "Content Weekdays" in mail_text and "T2–T6, nghỉ trọn T7" in mail_text
+        assert "Content Weekend" not in mail_text and "Content No Schedule" not in mail_text
+
+    async def test_scan_no_weekdays_only_job_no_mail(self, monkeypatch, fake_smtp):
+        store = JobStore(":memory:")
+        _install_adapters(monkeypatch, [make_job(title="Content Weekend", source_job_id="w2",
+                                                 description="T2 - T7")])
+        _smtp_env(monkeypatch, fake_smtp)
+
+        res = await run_scheduled_scan(store, with_details=False)
+
+        assert res.inserted == 1 and res.new_jobs == []
+        assert res.mail == {"sent": False, "message": "Không có job mới T2–T6", "count": 0}
+        assert len(fake_smtp.sent) == 0
+
     async def test_scan_no_new_jobs_no_mail(self, monkeypatch, fake_smtp):
         """Không có job mới -> không gửi mail (nhưng scan vẫn ok)."""
         store = JobStore(":memory:")

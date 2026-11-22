@@ -330,6 +330,7 @@ async def search_page(
     company: str = "",
     salary_min: str = "",
     source: str = "all",
+    all_days: str = "",
     page: int = 1,
     user: dict = Depends(current_user),
 ):
@@ -344,6 +345,8 @@ async def search_page(
         job_levels=[job_level] if job_level else None,
         company_query=company.strip() or None,
         salary_min_vnd=int(salary_min) if salary_min.isdigit() else None,
+        # lọc cứng T2–T6 bật mặc định; ô "Xem cả job không ghi lịch" gửi all_days=1 để tắt
+        weekdays_only=all_days != "1",
         source=source,
     ).validate()
     res = store.search_jobs(
@@ -352,7 +355,7 @@ async def search_page(
         job_levels=filters.job_levels, company_query=filters.company_query,
         salary_min_vnd=filters.salary_min_vnd, source=filters.source,
         page_size=page_size, cursor=str((page - 1) * page_size),
-        posted_within_days=60,
+        posted_within_days=60, weekdays_only=filters.weekdays_only,
     )
     facets = store.get_facets()
     # query string giữ nguyên filter khi chuyển trang (bỏ tham số rỗng / mặc định)
@@ -360,6 +363,7 @@ async def search_page(
         "q": q, "role": role, "district": district, "work_mode": work_mode,
         "job_level": job_level, "company": company,
         "salary_min": salary_min, "source": "" if source == "all" else source,
+        "all_days": "1" if all_days == "1" else "",
     }.items() if v})
     return templates.TemplateResponse(request, "search.html", {
         "user": user,
@@ -368,7 +372,7 @@ async def search_page(
         "facets": facets,
         "q": q, "role": role, "district": district,
         "work_mode": work_mode, "job_level": job_level, "company": company,
-        "salary_min": salary_min, "source": source,
+        "salary_min": salary_min, "source": source, "all_days": all_days == "1",
         "page": page, "pages": max(-(-res["total_estimate"] // page_size), 1),
         "page_qs": page_qs,
     })
@@ -474,6 +478,7 @@ async def api_jobs(
     experience_max_years: Optional[float] = None,
     posted_within_days: int = 14,
     portfolio_required: Optional[bool] = None,
+    weekdays_only: bool = True,
     source: str = "all",
     page_size: int = 10,
     cursor: Optional[str] = None,
@@ -490,7 +495,7 @@ async def api_jobs(
             salary_min_vnd=salary_min_vnd,
             experience_max_years=experience_max_years,
             posted_within_days=posted_within_days,
-            portfolio_required=portfolio_required,
+            portfolio_required=portfolio_required, weekdays_only=weekdays_only,
             source=source, page_size=page_size, cursor=cursor,
         ).validate()
     except ValidationError as e:
@@ -503,7 +508,7 @@ async def api_jobs(
         experience_max_years=f.experience_max_years,
         posted_within_days=f.posted_within_days,
         portfolio_required=f.portfolio_required, source=f.source,
-        page_size=f.page_size, cursor=f.cursor,
+        page_size=f.page_size, cursor=f.cursor, weekdays_only=f.weekdays_only,
     )
 
 

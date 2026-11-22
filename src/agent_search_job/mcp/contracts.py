@@ -48,6 +48,8 @@ class SearchFilters:
     company_query: Optional[str] = None
     posted_within_days: int = DEFAULT_POSTED_WITHIN_DAYS
     portfolio_required: Optional[bool] = None
+    # mặc định BẬT: chỉ job JD ghi rõ làm T2–T6, nghỉ trọn T7 + CN; False = xem cả job không ghi lịch
+    weekdays_only: bool = True
     source: str = "all"
     page_size: int = DEFAULT_PAGE_SIZE
     cursor: Optional[str] = None

@@ -192,7 +192,8 @@ a.chip-link[aria-current="page"] { background: var(--rose); border-color: var(--
 }
 .filters input:hover, .filters select:hover { border-color: var(--rose); }
 /* Bộ lọc đang áp dụng (không phải "Mọi ...") nổi bật bằng nền hồng */
-.filters select:has(option:checked:not([value=""]):not([value="all"])) {
+.filters select:has(option:checked:not([value=""]):not([value="all"])),
+.filters select[name="all_days"] {
   background-color: #fff0f5; border-color: var(--rose-deep); color: var(--accent);
 }
 .filters input:focus, .filters select:focus { outline: none; border-color: var(--rose-deep); box-shadow: 0 0 0 3px rgba(247, 183, 203, .55); }

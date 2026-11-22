@@ -32,7 +32,7 @@ SYSTEM_PARSE = """Bạn chuyển câu tìm việc tiếng Việt (tự nhiên) t
 Chỉ trả JSON đúng schema, không thêm chữ nào:
 {"query": "từ khóa search còn lại sau khi tách filter", "role_clusters": [], "districts": [],
  "job_levels": [], "company_query": null,
- "salary_min_vnd": null, "work_modes": [], "posted_within_days": 14, "portfolio_required": null, "source": "all"}
+ "salary_min_vnd": null, "work_modes": [], "posted_within_days": 14, "portfolio_required": null, "weekdays_only": true, "source": "all"}
 Quy tắc:
 - role_clusters chỉ nhận: content_marketing, copywriter_seo, social_media, communications_pr, brand_marketing, creative_production
 - job_levels chỉ nhận: intern, fresher, junior, middle, senior, lead, manager. "thực tập"=intern; "chưa có kinh nghiệm/fresher"=fresher; "junior/1-2 năm"=junior; "middle/2-4 năm"=middle; "senior/4+ năm"=senior; "trưởng nhóm"=lead; "trưởng phòng/quản lý"=manager
@@ -42,6 +42,7 @@ Quy tắc:
 - salary_min_vnd: số VND/tháng ("trên 15 triệu"=15000000, "15tr+"=15000000); null nếu không nói lương
 - posted_within_days: "mới đăng hôm qua"=1, "tuần này"=7, "2 tuần"=14, "tháng này"=30 (tối đa 60)
 - portfolio_required: true nếu câu nhắc "portfolio/hồ sơ năng lực"
+- weekdays_only: luôn true (chỉ việc làm T2–T6, nghỉ trọn T7 + CN); false CHỈ khi câu nói rõ muốn xem cả việc làm thứ 7/chủ nhật/cuối tuần hoặc "mọi lịch làm việc"
 - source: "topcv" nếu câu nói rõ chỉ TopCV, "all" mặc định
 - query: từ khóa còn lại (vd "content tiktok", "brand marketing", "seo") — bỏ hết số lương/quận/từ chỉ thời gian
 Suy nghĩ ngắn rồi trả JSON ở dòng cuối."""
@@ -88,6 +89,9 @@ def rule_parse(text: str) -> SearchFilters:
         f.role_clusters = sorted(roles)
     if "remote" in low or "từ xa" in low:
         f.work_modes = ["remote"]
+    if re.search(r"mọi\s*lịch|(?:cả|kể\s*cả|bao\s*gồm)\s*(?:việc\s*|job\s*)?(?:làm\s*)?"
+                 r"(?:t7|thứ\s*7|thứ\s*bảy|chủ\s*nhật|cuối\s*tuần)", low):
+        f.weekdays_only = False
     return f
 
 
@@ -186,6 +190,7 @@ class NLQueryParser:
             days = 14
         source = d.get("source") if d.get("source") in VALID_SOURCES else "all"
         portfolio = d.get("portfolio_required")
+        weekdays_only = d.get("weekdays_only") is not False  # thiếu/sai kiểu -> giữ lọc cứng
         if portfolio not in (True, False):
             portfolio = None
         try:
@@ -198,5 +203,5 @@ class NLQueryParser:
             salary_min_vnd=salary, work_modes=modes or None,
             job_levels=levels or None, company_query=company_q,
             posted_within_days=days, portfolio_required=portfolio,
-            source=source, page_size=page_size,
+            weekdays_only=weekdays_only, source=source, page_size=page_size,
         ).validate()

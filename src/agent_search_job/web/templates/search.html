@@ -26,6 +26,10 @@
         {{ icon('search') }}
         <input type="search" name="q" value="{{ q }}" placeholder="Ví dụ: content tiktok, brand marketing, SEO..." aria-label="Từ khóa">
       </label>
+      <select name="all_days" aria-label="Lịch làm việc">
+        <option value="" {% if not all_days %}selected{% endif %}>Chỉ T2–T6, nghỉ T7 &amp; CN</option>
+        <option value="1" {% if all_days %}selected{% endif %}>Mọi lịch làm việc</option>
+      </select>
       <select name="role" aria-label="Nhóm nghề">
         <option value="">Mọi nhóm nghề</option>
         {% for r in facets.role_clusters %}
@@ -59,7 +63,7 @@
         {% endfor %}
       </select>
       <button class="btn go" type="submit">{{ icon('search') }}Tìm việc</button>
-      {% if q or role or district or work_mode or job_level or company or salary_min or source != 'all' %}
+      {% if q or role or district or work_mode or job_level or company or salary_min or source != 'all' or all_days %}
       <a class="btn clear" href="/search">{{ icon('x') }}Xoá bộ lọc</a>
       {% endif %}
     </form>
@@ -105,7 +109,7 @@
 
     {# Toolbar kiểu Xóm Jobs: đếm + sắp xếp + Danh sách/Lưới #}
     <div class="toolbar">
-      <p class="count">Tìm thấy <strong>{{ total }}</strong> việc làm{% if pages > 1 %} <span class="page-of">Trang {{ page }}/{{ pages }}</span>{% endif %}</p>
+      <p class="count">Tìm thấy <strong>{{ total }}</strong> việc làm{% if not all_days %} chỉ T2–T6, nghỉ trọn T7 &amp; CN{% endif %}{% if pages > 1 %} <span class="page-of">Trang {{ page }}/{{ pages }}</span>{% endif %}</p>
       <div class="view-toggle" role="group" aria-label="Dạng xem">
         <button type="button" id="view-list" aria-pressed="true">{{ icon('list') }}Danh sách</button>
         <button type="button" id="view-grid" aria-pressed="false">{{ icon('grid') }}Lưới</button>

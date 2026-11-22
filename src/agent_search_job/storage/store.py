@@ -22,7 +22,7 @@ from typing import Optional
 from ..domain.models import Company, CompanyFeedback, NormalizedJob, utcnow
 
 log = logging.getLogger(__name__)
-from ..domain.normalize import dedupe_key, detect_saturday_off
+from ..domain.normalize import dedupe_key, detect_weekdays_only
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     platforms TEXT DEFAULT '[]',
     creative_tools TEXT DEFAULT '[]',
     portfolio_required INTEGER,
-    saturday_off INTEGER,
+    weekdays_only INTEGER,
     deadline TEXT,
     description TEXT DEFAULT '',
     requirements TEXT DEFAULT '',
@@ -211,21 +211,25 @@ class JobStore:
             with self.conn:
                 self.conn.execute(
                     "ALTER TABLE jobs ADD COLUMN job_level TEXT DEFAULT ''")
-        if "saturday_off" not in cols:
+        if "weekdays_only" not in cols:
             # DB cũ: thêm cột rồi tính lại từ JD đã lưu (1 lần, khi cột vừa được thêm)
             rows = self.conn.execute(
                 "SELECT job_id, description, requirements, benefits FROM jobs").fetchall()
             with self.conn:
-                self.conn.execute("ALTER TABLE jobs ADD COLUMN saturday_off INTEGER")
+                self.conn.execute("ALTER TABLE jobs ADD COLUMN weekdays_only INTEGER")
                 for r in rows:
                     try:
                         benefits = " ".join(json.loads(r["benefits"] or "[]"))
                     except (TypeError, json.JSONDecodeError):
                         benefits = ""
-                    off = detect_saturday_off(f"{r['description']} {r['requirements']} {benefits}")
-                    if off is not None:
-                        self.conn.execute("UPDATE jobs SET saturday_off=? WHERE job_id=?",
-                                          (int(off), r["job_id"]))
+                    only = detect_weekdays_only(f"{r['description']} {r['requirements']} {benefits}")
+                    if only is not None:
+                        self.conn.execute("UPDATE jobs SET weekdays_only=? WHERE job_id=?",
+                                          (int(only), r["job_id"]))
+        if "saturday_off" in cols:
+            # cột của luật cũ (chỉ xét T7) đã thay bằng weekdays_only (T2–T6, nghỉ trọn T7 + CN)
+            with self.conn:
+                self.conn.execute("ALTER TABLE jobs DROP COLUMN saturday_off")
         # token cũ = sha256("invite:"+email)[:32] -> ai biết email cũng tính ra được;
         # đổi sang token ngẫu nhiên (token cũ hết hiệu lực, chạy lại không đổi gì)
         for row in self.conn.execute("SELECT user_id, email, token FROM users").fetchall():
@@ -295,7 +299,7 @@ class JobStore:
                    role_cluster, role_cluster_confidence, salary_min_vnd, salary_max_vnd,
                    salary_text, experience_years_min, experience_years_max, job_level, work_mode,
                    district, city, is_hcm, address, platforms, creative_tools,
-                   portfolio_required, saturday_off, deadline, description, requirements, benefits,
+                   portfolio_required, weekdays_only, deadline, description, requirements, benefits,
                    apply_url, languages, is_active, source, source_url, source_job_id,
                    dedupe_key_src, first_seen_at, last_verified_at)
                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
@@ -310,7 +314,7 @@ class JobStore:
                     json.dumps(job.platforms), json.dumps(job.creative_tools),
                     (1 if job.portfolio_required else
                      0 if job.portfolio_required is False else None),
-                    None if job.saturday_off is None else int(job.saturday_off),
+                    None if job.weekdays_only is None else int(job.weekdays_only),
                     job.deadline.isoformat() if job.deadline else None,
                     job.description, job.requirements, json.dumps(job.benefits),
                     job.apply_url, json.dumps(job.languages), int(job.is_active),
@@ -350,7 +354,7 @@ class JobStore:
                    salary_text=?, experience_years_min=?, experience_years_max=?, job_level=?,
                    work_mode=?, district=?, city=?, is_hcm=?, address=?, platforms=?,
                    creative_tools=?, portfolio_required=?,
-                   saturday_off=CASE WHEN ?='' THEN saturday_off ELSE ? END, deadline=?,
+                   weekdays_only=CASE WHEN ?='' THEN weekdays_only ELSE ? END, deadline=?,
                    description=COALESCE(NULLIF(?, ''), description),
                    requirements=COALESCE(NULLIF(?, ''), requirements),
                    benefits=?, apply_url=?, languages=?,
@@ -367,8 +371,8 @@ class JobStore:
                     json.dumps(job.platforms), json.dumps(job.creative_tools),
                     (1 if job.portfolio_required else
                      0 if job.portfolio_required is False else None),
-                    # JD lần này rỗng (giữ JD cũ) -> giữ luôn saturday_off tính từ JD cũ
-                    job.description, None if job.saturday_off is None else int(job.saturday_off),
+                    # JD lần này rỗng (giữ JD cũ) -> giữ luôn weekdays_only tính từ JD cũ
+                    job.description, None if job.weekdays_only is None else int(job.weekdays_only),
                     job.deadline.isoformat() if job.deadline else None,
                     job.description, job.requirements, json.dumps(job.benefits),
                     job.apply_url, json.dumps(job.languages), active_flag,
@@ -411,7 +415,7 @@ class JobStore:
                 d[k] = json.loads(d.get(k) or "[]")
             except (TypeError, json.JSONDecodeError):
                 d[k] = []
-        for k in ("portfolio_required", "saturday_off"):
+        for k in ("portfolio_required", "weekdays_only"):
             if d.get(k) is not None:
                 d[k] = bool(d[k])
         return d
@@ -436,9 +440,12 @@ class JobStore:
         page_size: int = 10,
         cursor: Optional[str] = None,
         include_inactive: bool = False,
+        weekdays_only: bool = False,
     ) -> dict:
         where = []
         params: list = []
+        if weekdays_only:  # lọc cứng: chỉ job JD ghi rõ T2–T6, nghỉ trọn T7 + CN
+            where.append("weekdays_only=1")
         if not include_inactive:
             where.append("is_active=1")
         where.append("is_hcm=1")
@@ -509,10 +516,10 @@ class JobStore:
         wsql = (" WHERE " + " AND ".join(where)) if where else ""
         base = f"FROM jobs{wsql}"
         total = self.conn.execute(f"SELECT COUNT(*) c {base}", params).fetchone()["c"]
-        # sort: job nghỉ T7 trước -> JD không ghi lịch -> job có làm T7; trong mỗi nhóm
+        # sort (khi tắt lọc): T2–T6 trước -> JD không ghi lịch -> có làm T7/CN; trong mỗi nhóm
         # LLM relevance (nếu có) giảm dần, rồi job_id DESC (job mới trước)
         order = (
-            " ORDER BY CASE saturday_off WHEN 1 THEN 0 WHEN 0 THEN 2 ELSE 1 END, "
+            " ORDER BY CASE weekdays_only WHEN 1 THEN 0 WHEN 0 THEN 2 ELSE 1 END, "
             "(SELECT MAX(CAST(json_extract(e.payload_json,'$.relevance') AS REAL)) "
             "FROM llm_enrichment e WHERE e.job_id=jobs.job_id AND e.kind='relevance') DESC, "
             "job_id DESC"

@@ -71,7 +71,7 @@ def render_new_jobs_email(jobs: list[dict], scan_summary: dict,
 
     # chip tóm tắt lượt quét: chỉ hiện mục có số khác 0 (màu như badge trên web: mint / lilac / xám / cam)
     chip_specs = (
-        ("inserted", f"+{scan_summary.get('inserted', n)} việc mới", "#e2f5ec", "#23795a"),
+        ("inserted", f"+{scan_summary.get('inserted', n)} việc mới (mọi lịch làm)", "#e2f5ec", "#23795a"),
         ("updated", f"{scan_summary.get('updated', 0)} cập nhật", "#f1ecfb", "#6a55a8"),
         ("hidden", f"{scan_summary.get('hidden', 0)} bị ẩn (hết hạn/ngừng tuyển)", "#f8eff3", "#7d6070"),
         ("deleted", f"{scan_summary.get('deleted', 0)} đã xoá", "#f8eff3", "#7d6070"),
@@ -93,7 +93,6 @@ def render_new_jobs_email(jobs: list[dict], scan_summary: dict,
         link = (f"{site_url}/jobs/{j['job_id']}" if site_url
                 else (j.get("apply_url") or j.get("source_url") or "").strip())
         tags = [t for t in (
-            "🌿 Nghỉ T7" if j.get("saturday_off") else "",
             JOB_LEVEL_LABELS_VI.get(j.get("job_level") or "", ""),
             f"📍 {j['district']}" if j.get("district") else "",
             ROLE_CLUSTER_LABELS_VI.get(j.get("role_cluster") or "", j.get("role_cluster") or ""),
@@ -163,7 +162,8 @@ def render_new_jobs_email(jobs: list[dict], scan_summary: dict,
         box-shadow:0 6px 16px -10px rgba(194,54,107,.35)">
        <h1 style="margin:0;color:#3a2230;font:800 21px/1.3 {display}">Công chúa ơi, nay em tìm được
         <span style="color:#c2366b">{n} jobs mới</span> nè 🌸</h1>
-       <p style="margin:6px 0 0;color:#7d6070;font:500 13.5px/1.5 {font}">{escape(f"Lượt quét định kỳ lúc {when}" if when else "Lượt quét định kỳ")}</p>
+       <p style="margin:6px 0 0;color:#7d6070;font:500 13.5px/1.5 {font}">{escape(f"Lượt quét định kỳ lúc {when}" if when else "Lượt quét định kỳ")}
+        · chỉ việc làm <b style="color:#23795a">T2–T6, nghỉ trọn T7 &amp; CN</b></p>
       </div>
      </td>
     </tr></table>
@@ -183,7 +183,8 @@ def render_new_jobs_email(jobs: list[dict], scan_summary: dict,
 </table>
 </body></html>"""
     summary = " · ".join(label for key, label, _, _ in chip_specs if scan_summary.get(key, n if key == "inserted" else 0))
-    text = (f"Công chúa ơi, nay em tìm được {n} jobs mới nè 🌸" + (f"\nLượt quét lúc {when}" if when else "")
+    text = (f"Công chúa ơi, nay em tìm được {n} jobs mới nè 🌸 (chỉ việc làm T2–T6, nghỉ trọn T7 & CN)"
+            + (f"\nLượt quét lúc {when}" if when else "")
             + f"\n{summary}\n\n"
             + "\n".join(text_lines)
             + (f"\n\n… và {more} việc nữa" if more > 0 else "")

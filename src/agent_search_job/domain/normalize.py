@@ -230,32 +230,53 @@ def detect_portfolio_required(text: str) -> Optional[bool]:
     return True
 
 
-# Lịch làm việc thứ 7 (từ JD/quyền lợi). Ví dụ thật trong dữ liệu:
-#   làm T7:  "Thứ 2 – Thứ 6: 08:30–18:00 • Thứ 7: 08:30–12:00", "T2 - T7 (Nghỉ 02 T7 mỗi tháng)",
-#            "Monday - Saturday morning", "Thứ 7 làm cách tuần", "đến hết buổi sáng Thứ 7"
-#   nghỉ T7: "Thứ 2 - Thứ 6", "Monday to Friday", "5-day working per week", "Nghỉ Thứ 7, Chủ nhật"
+# Lịch làm việc (từ JD/yêu cầu/quyền lợi) — lọc CỨNG: chỉ nhận việc làm T2–T6, nghỉ TRỌN T7 và CN.
+# Ví dụ thật trong dữ liệu:
+#   chỉ T2–T6: "Thứ 2 - Thứ 6", "Monday to Friday", "5-day working per week", "Nghỉ Thứ 7, Chủ nhật"
+#   có làm cuối tuần (loại): "Thứ 2 – Thứ 6: 08:30–18:00 • Thứ 7: 08:30–12:00", "T2 - T7 (Nghỉ 02 T7
+#     mỗi tháng)", "Monday - Saturday morning", "Thứ 7 làm cách tuần", "có thể làm việc vào sáng thứ Bảy
+#     hoặc sáng Chủ nhật khi có lịch", làm theo ca/xoay ca, 6 ngày/tuần, 44–48 giờ/tuần
 _SAT = r"(?:th[ứu]\s*(?:7|b[ảa]y)|\bt7\b|saturday|\bsat\b)"
+_SUN = r"(?:ch[ủu]\s*nh[ậa]t|sunday)"
+_SUN_OR_CN = rf"(?:{_SUN}|\bcn\b)"  # "CN" chỉ tin khi đứng trong khoảng/danh sách ngày ("T2 - CN", "T7, CN")
 _MON = r"(?:th[ứu]\s*(?:2|hai)|\bt2\b|monday|\bmon\b)"
 _TO = r"\s*(?:[-–—~]|đến|tới|to|through)\s*"
-_SAT_OFF_RE = re.compile(
-    rf"(?:không\s*làm\s*(?:việc\s*)?(?:vào\s*)?|nghỉ\s*(?:cả\s*|các\s*ngày\s*)?){_SAT}"
-    rf"|nghỉ\s*(?:cả\s*)?cuối\s*tuần|weekends?\s*off|off\s*(?:on\s*)?weekends?|{_SAT}\s*(?:and\s*sunday\s*)?off")
-_SAT_WORK_RE = re.compile(
-    rf"{_MON}{_TO}(?:hết\s*)?(?:buổi\s*)?(?:sáng\s*)?{_SAT}"
-    rf"|{_SAT}\s*[:\-–(]?\s*(?:làm|buổi|sáng|nửa|half|full|morning|\d{{1,2}}\s*(?:[:h]|am|giờ))"
-    rf"|làm\s*(?:việc\s*)?(?:cả\s*)?{_SAT}")
+_WEEKEND_DAYS = rf"(?:{_SAT}|{_SUN_OR_CN}|cu[ốo]i\s*tu[ầa]n|weekends?)(?:\s*(?:,|và|&|/|\+|-|–|and)\s*(?:{_SAT}|{_SUN_OR_CN}))*"
+_WEEKEND_OFF_RE = re.compile(
+    rf"(?:không\s*(?:phải\s*)?(?:đi\s*)?làm\s*(?:việc\s*)?(?:vào\s*)?(?:các\s*ngày\s*)?"
+    rf"|nghỉ\s*:?\s*(?:cả\s*|trọn\s*|các\s*ngày\s*|ngày\s*)*){_WEEKEND_DAYS}"
+    rf"|{_SAT}\s*(?:,|&|and|/)?\s*(?:{_SUN}\s*)?off|weekends?\s*(?:off|free)|off\s*(?:on\s*)?weekends?")
+_WEEKEND_WORK_RE = re.compile(
+    # khoảng ngày kéo tới T7/CN: "T2 - T7", "Monday - Saturday", "từ thứ 2 đến hết buổi sáng thứ 7"
+    rf"{_MON}{_TO}(?:hết\s*)?(?:buổi\s*)?(?:sáng\s*|trưa\s*)?(?:{_SAT}|{_SUN_OR_CN})"
+    # T7/CN kèm giờ/buổi: "Thứ 7: 8h-12h", "Saturday: 8:00 AM", "Thứ 7 làm buổi sáng", "Thứ 7- Full day"
+    rf"|(?:{_SAT}|{_SUN})\s*[:\-–(]?\s*(?:làm|buổi|sáng|chiều|nửa|half|full|morning|afternoon|online"
+    rf"|\d{{1,2}}\s*(?:[:h]|am|pm|giờ))"
+    # động từ làm việc ngay trước T7/CN/cuối tuần (cùng câu): "làm việc vào sáng thứ Bảy", "trực cuối tuần"
+    rf"|(?:làm|trực|hỗ\s*trợ|tham\s*gia|sự\s*kiện|event|livestream|quay|chụp|tăng\s*ca|\bot\b|overtime|work(?:ing)?)"
+    rf"[^.\n;•|]{{0,25}}?(?:{_SAT}|{_SUN}|cu[ốo]i\s*tu[ầa]n|weekends?)"
+    # T7 luân phiên: "nghỉ 02 T7 mỗi tháng", "2 thứ 7/tháng", "cách tuần", "alternate Saturdays"
+    rf"|\d+\s*(?:ngày\s*)?{_SAT}\s*(?:/|mỗi|trong|một|per|a)\s*(?:tháng|month)|cách\s*tuần|xen\s*kẽ"
+    r"|alternate\s*saturdays?|every\s*other\s*saturday"
+    # làm theo ca / 6–7 ngày một tuần / 44–48 giờ một tuần (thường gồm sáng T7)
+    r"|(?:theo|xoay|chia|làm)\s*ca\b|\bca\s*(?:xoay|kíp)|rotating\s*shifts?|night\s*shifts?"  # \b: "theo campaign"
+    r"|work(?:ing)?\s*(?:in\s*)?shifts?|shift\s*work"
+    r"|[67]\s*(?:ngày|days?)\s*(?:làm\s*việc\s*)?(?:/|mỗi|một|trên|per|a)\s*(?:tuần|week)|[67][\s-]*days?\s*work"
+    r"|làm\s*việc\s*[67]\s*ngày|(?:44|48)\s*(?:giờ|h|tiếng|hours?)\s*(?:/|mỗi|một|per|a)\s*(?:tuần|week)")
 _WEEKDAYS_ONLY_RE = re.compile(
     rf"{_MON}{_TO}(?:th[ứu]\s*(?:6|s[áa]u)|\bt6\b|friday|\bfri\b)"
     r"|5[\s-]*(?:days?|ngày)\s*(?:working|làm\s*việc|work\s*week|/\s*tuần|mỗi\s*tuần|một\s*tuần|per\s*week)"
-    r"|làm\s*việc\s*5\s*ngày")
+    r"|làm\s*việc\s*5\s*ngày|40\s*(?:giờ|h|tiếng|hours?)\s*(?:/|mỗi|một|per|a)\s*(?:tuần|week)")
 
 
-def detect_saturday_off(text: str) -> Optional[bool]:
-    """True = nghỉ thứ 7, False = có làm thứ 7 (kể cả nửa buổi/cách tuần), None = JD không ghi rõ."""
-    low = re.sub(r"\s+", " ", (text or "").lower())
-    explicit_off = bool(_SAT_OFF_RE.search(low))
-    # bỏ cụm "nghỉ/không làm thứ 7" trước khi tìm dấu hiệu làm T7, kẻo "không làm thứ 7" bị đọc thành "làm thứ 7"
-    if _SAT_WORK_RE.search(_SAT_OFF_RE.sub(" ", low)):
+def detect_weekdays_only(text: str) -> Optional[bool]:
+    """True = chỉ làm T2–T6, nghỉ trọn T7 + CN; False = có làm T7/CN dù chỉ nửa buổi, cách tuần,
+    theo ca hay "khi có sự kiện"; None = JD không ghi lịch làm việc."""
+    low = re.sub(r"[ \t\r\xa0]+", " ", (text or "").lower())  # giữ \n: ranh giới câu cho luật "động từ + T7"
+    explicit_off = bool(_WEEKEND_OFF_RE.search(low))
+    # bỏ cụm "nghỉ T7, CN"/"không làm cuối tuần" trước khi tìm dấu hiệu làm cuối tuần,
+    # kẻo "không làm thứ 7" bị đọc thành "làm thứ 7"
+    if _WEEKEND_WORK_RE.search(_WEEKEND_OFF_RE.sub(" ", low)):
         return False
     if explicit_off or _WEEKDAYS_ONLY_RE.search(low):
         return True
@@ -379,7 +400,7 @@ def normalize_job(job: NormalizedJob) -> NormalizedJob:
     job.platforms = extract_platforms(blob)
     job.creative_tools = extract_tools(blob)
     job.portfolio_required = detect_portfolio_required(blob)
-    job.saturday_off = detect_saturday_off(
+    job.weekdays_only = detect_weekdays_only(
         f"{job.description} {job.requirements} {' '.join(job.benefits)}")
     if not job.deadline:  # mặc định 30 ngày nếu không rõ
         from datetime import timedelta
